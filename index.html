@@ -1681,15 +1681,15 @@ const JIO = {
   USER_GROUP: 'tvYR7NSNn7rymo3F',
   VER_CODE:   '424',
   // Dynamic CORS proxy:
-  // When running on Cloudflare Pages (*.pages.dev), uses same-origin '/proxy/' automatically.
-  // When on GitHub Pages, uses Cloudflare Pages proxy URL.
+  // When running on Cloudflare Pages (*.pages.dev) or custom domain, uses same-origin '/proxy/' automatically.
+  // When on GitHub Pages or local preview, falls back to Cloudflare Pages proxy URL.
   get PROXY() {
-    if (window.location.hostname.endsWith('pages.dev')) {
+    if (window.location.hostname.endsWith('pages.dev') || (!window.location.hostname.endsWith('github.io') && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1')) {
       return window.location.origin + '/proxy/';
     }
     const custom = localStorage.getItem('jio_proxy_url');
     if (custom) return custom.endsWith('/') ? custom : custom + '/';
-    return 'https://tv-guide-2rm.pages.dev/proxy/';
+    return 'https://tvguide-live.pages.dev/proxy/';
   },
   LOGIN_BASE: 'https://jiotvapi.media.jio.com/userservice/apis/',
   LISTS_BASE: 'https://jiotvapi.cdn.jio.com/apis/',
