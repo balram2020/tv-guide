@@ -1,71 +1,102 @@
 /**
  * JioTV CORS Proxy — Cloudflare Worker
- * Routes browser requests to JioTV API endpoints, adding CORS headers.
- * Allowed origin: https://balram2020.github.io
+ * Routes browser requests to JioTV API endpoints and streams, adding CORS headers.
  */
-
-const ALLOWED_ORIGIN = 'https://balram2020.github.io';
-
-const JIO_ALLOWED_HOSTS = [
-  'jiotvapi.media.jio.com',
-  'jiotvapi.cdn.jio.com',
-  'auth.media.jio.com',
-  'tv.media.jio.com',
-];
-
-const CORS_HEADERS = {
-  'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
-  'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-  'Access-Control-Allow-Headers': '*',
-  'Access-Control-Max-Age': '86400',
-};
 
 export default {
   async fetch(request) {
     const url = new URL(request.url);
 
+    const requestOrigin = request.headers.get('Origin') || '*';
+    const corsHeaders = {
+      'Access-Control-Allow-Origin': requestOrigin,
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Headers': '*',
+      'Access-Control-Expose-Headers': '*',
+      'Access-Control-Max-Age': '86400',
+    };
+
     // ── CORS Preflight ──
     if (request.method === 'OPTIONS') {
-      return new Response(null, { status: 204, headers: CORS_HEADERS });
+      return new Response(null, { status: 204, headers: corsHeaders });
     }
 
-    // ── Parse target URL from path: /proxy/<target_url> ──
-    // e.g. /proxy/https://jiotvapi.media.jio.com/userservice/apis/v1.3/validateMobile/sendOTP
-    const rawPath = url.pathname.slice(1); // strip leading /
-    const proxyPrefix = 'proxy/';
-    if (!rawPath.startsWith(proxyPrefix)) {
+    // ── Extract target URL ──
+    // 1. Check ?url= query parameter first (safest against path normalization)
+    let targetUrl = url.searchParams.get('url') || url.searchParams.get('u');
+    if (!targetUrl) {
+      // 2. Fall back to /proxy/<targetUrl> in the pathname
+      const pathname = url.pathname;
+      const prefix = '/proxy/';
+      const idx = pathname.indexOf(prefix);
+      if (idx !== -1) {
+        let rest = pathname.slice(idx + prefix.length);
+        if (rest.startsWith('https:/') && !rest.startsWith('https://')) {
+          rest = 'https://' + rest.slice(7);
+        } else if (rest.startsWith('http:/') && !rest.startsWith('http://')) {
+          rest = 'http://' + rest.slice(6);
+        }
+        targetUrl = rest + url.search;
+      }
+    }
+
+    if (!targetUrl) {
       return new Response(
-        JSON.stringify({ error: 'Usage: /proxy/<jiotv-api-url>' }),
-        { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        JSON.stringify({ error: 'Usage: /proxy?url=<target_url>' }),
+        { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
       );
     }
-
-    const targetUrl = rawPath.slice(proxyPrefix.length) + url.search;
 
     // ── Validate target host ──
-    let targetHost;
+    let parsedTarget;
     try {
-      targetHost = new URL(targetUrl).hostname;
+      parsedTarget = new URL(targetUrl);
     } catch {
       return new Response(
-        JSON.stringify({ error: 'Invalid target URL' }),
-        { status: 400, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        JSON.stringify({ error: 'Invalid target URL: ' + targetUrl }),
+        { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
       );
     }
 
-    if (!JIO_ALLOWED_HOSTS.some(h => targetHost === h || targetHost.endsWith('.' + h))) {
+    if (parsedTarget.protocol !== 'http:' && parsedTarget.protocol !== 'https:') {
       return new Response(
-        JSON.stringify({ error: `Forbidden host: ${targetHost}` }),
-        { status: 403, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        JSON.stringify({ error: 'Only HTTP/HTTPS URLs are supported' }),
+        { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
       );
     }
 
-    // ── Build forwarded request (strip browser-added headers) ──
+    const targetHost = parsedTarget.hostname.toLowerCase();
+    // Prevent SSRF / local network access
+    if (
+      targetHost === 'localhost' ||
+      targetHost === '127.0.0.1' ||
+      targetHost === '0.0.0.0' ||
+      targetHost === '::1' ||
+      targetHost.startsWith('192.168.') ||
+      targetHost.startsWith('10.') ||
+      targetHost.startsWith('172.16.') ||
+      targetHost === '169.254.169.254'
+    ) {
+      return new Response(
+        JSON.stringify({ error: `Forbidden target host: ${targetHost}` }),
+        { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+      );
+    }
+
+    // ── Forward request (strip browser-injected headers) ──
     const fwdHeaders = new Headers();
-    const skipHeaders = new Set(['host', 'origin', 'referer', 'cf-connecting-ip',
-      'cf-ipcountry', 'cf-ray', 'cf-visitor', 'x-forwarded-for', 'x-real-ip']);
+    const skipHeaders = new Set([
+      'host', 'origin', 'referer', 'cf-connecting-ip',
+      'cf-ipcountry', 'cf-ray', 'cf-visitor', 'x-forwarded-for', 'x-real-ip'
+    ]);
     for (const [k, v] of request.headers.entries()) {
       if (!skipHeaders.has(k.toLowerCase())) fwdHeaders.set(k, v);
+    }
+
+    // Ensure Jio-compatible User-Agent for upstream requests if browser UA is sent
+    const currentUa = fwdHeaders.get('user-agent') || '';
+    if (!currentUa || currentUa.includes('Mozilla/')) {
+      fwdHeaders.set('User-Agent', 'plaYtv/7.1.8 (Linux;Android 13) ExoPlayerLib/1.3.1');
     }
 
     const fwdInit = {
@@ -75,23 +106,23 @@ export default {
       redirect: 'follow',
     };
 
-    // ── Proxy the request ──
+    // ── Execute upstream fetch ──
     let upstream;
     try {
       upstream = await fetch(targetUrl, fwdInit);
     } catch (e) {
       return new Response(
         JSON.stringify({ error: 'Upstream fetch failed', detail: e.message }),
-        { status: 502, headers: { 'Content-Type': 'application/json', ...CORS_HEADERS } }
+        { status: 502, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
       );
     }
 
     // ── Return response with CORS headers ──
     const respHeaders = new Headers(upstream.headers);
-    Object.entries(CORS_HEADERS).forEach(([k, v]) => respHeaders.set(k, v));
-    // Remove headers that conflict with CORS
+    Object.entries(corsHeaders).forEach(([k, v]) => respHeaders.set(k, v));
     respHeaders.delete('x-frame-options');
     respHeaders.delete('content-security-policy');
+    respHeaders.delete('content-encoding');
 
     return new Response(upstream.body, {
       status: upstream.status,
