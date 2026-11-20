@@ -1695,47 +1695,73 @@ const JIO = {
     };
   },
 
+  // Safe JSON parse — JioTV can return 204 (empty) or plain-text error pages
+  _parse(t) {
+    if (!t || !t.trim()) return {};
+    try { return JSON.parse(t); }
+    catch(e) { return { _raw: t, message: t.slice(0, 200) }; }
+  },
+
   async post(url, body, headers) {
-    const r = await fetch(url, {
-      method: 'POST', body: JSON.stringify(body), headers: { ...headers }
-    });
-    const t = await r.text();
-    return { code: r.status, data: JSON.parse(t) };
+    let r, t;
+    try {
+      r = await fetch(url, { method: 'POST', body: JSON.stringify(body), headers: { ...headers } });
+      t = await r.text();
+    } catch(e) {
+      // Network / CORS failure
+      throw new Error('Network error — JioTV API may be blocked by CORS in browser. ' + e.message);
+    }
+    return { code: r.status, data: this._parse(t), raw: t };
   },
 
   async get(url, headers) {
-    const r = await fetch(url, { headers: { ...headers } });
-    const t = await r.text();
-    return { code: r.status, data: JSON.parse(t) };
+    let r, t;
+    try {
+      r = await fetch(url, { headers: { ...headers } });
+      t = await r.text();
+    } catch(e) {
+      throw new Error('Network error — JioTV API unreachable. ' + e.message);
+    }
+    return { code: r.status, data: this._parse(t), raw: t };
   },
 
   // ── LOGIN FLOW ──
   async sendOtp(phone) {
-    const { code, data } = await this.post(
+    const { code, data, raw } = await this.post(
       this.LOGIN_BASE + 'v1.3/validateMobile/sendOTP',
       { number: '91' + phone },
       this.loginHeaders()
     );
-    if (code !== 200 && code !== 204) throw new Error(data?.message || `HTTP ${code}`);
+    // 200 or 204 = OTP sent successfully; anything else = error
+    if (code !== 200 && code !== 204 && code !== 202) {
+      const msg = data?.message || data?.errorMessage || data?._raw || `Server returned HTTP ${code}`;
+      throw new Error(msg);
+    }
     return data;
   },
 
   async verifyOtp(phone, otp) {
-    const { code, data } = await this.post(
+    const { code, data, raw } = await this.post(
       this.LOGIN_BASE + 'v1.3/validateMobile/verifyOTP',
       { number: '91' + phone, otp },
       this.loginHeaders()
     );
-    if (code !== 200) throw new Error(data?.message || `HTTP ${code}`);
-    // Extract session tokens
-    const sess = data.sessionAttributes?.user || data;
+    if (code !== 200 && code !== 201) {
+      const msg = data?.message || data?.errorMessage || data?._raw || `HTTP ${code}`;
+      throw new Error(msg);
+    }
+    // Token extraction — handle multiple response shapes seen across JioTV API versions
+    const sess = data.sessionAttributes?.user || data.data || data;
     const authToken  = sess.authToken   || data.authToken   || '';
-    const ssoToken   = data.ssoToken    || sess.ssoToken    || '';
-    const refreshTok = data.refreshToken|| sess.refreshToken|| '';
-    const lb         = data.lbCookie    || sess.lbCookie    || '1';
-    const uid        = data.uniqueId    || sess.uniqueId    || '';
-    const sub        = data.subscriberId|| sess.subscriberId|| '';
-    if (!authToken) throw new Error('No auth token in response');
+    const ssoToken   = sess.ssoToken    || data.ssoToken    || '';
+    const refreshTok = sess.refreshToken|| data.refreshToken|| '';
+    const lb         = sess.lbCookie    || data.lbCookie    || '1';
+    const uid        = sess.uniqueId    || data.uniqueId    || '';
+    const sub        = sess.subscriberId|| data.subscriberId|| '';
+    if (!authToken) {
+      console.error('verifyOTP raw response:', raw);
+      throw new Error('Sign-in succeeded but no auth token found. Raw: ' + (raw||'').slice(0,120));
+    }
     this.save(ssoToken, authToken, refreshTok, lb, uid, sub);
     return data;
   },
