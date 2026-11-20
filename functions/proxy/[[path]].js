@@ -1,15 +1,8 @@
 /**
  * Cloudflare Pages Function: /proxy/*
- * Handles JioTV API requests with full CORS support.
+ * Handles JioTV API requests, key decryption fetches, and streaming with full CORS support.
  * Automatically runs on your Cloudflare Pages deployment!
  */
-
-const JIO_ALLOWED_HOSTS = [
-  'jiotvapi.media.jio.com',
-  'jiotvapi.cdn.jio.com',
-  'auth.media.jio.com',
-  'tv.media.jio.com',
-];
 
 export async function onRequest(context) {
   const { request } = context;
@@ -20,6 +13,7 @@ export async function onRequest(context) {
     'Access-Control-Allow-Origin': requestOrigin,
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     'Access-Control-Allow-Headers': '*',
+    'Access-Control-Expose-Headers': '*',
     'Access-Control-Max-Age': '86400',
   };
 
@@ -29,7 +23,7 @@ export async function onRequest(context) {
   }
 
   // ── Extract target URL ──
-  // 1. Check ?url= query parameter first (safest against path normalization)
+  // 1. Check ?url= or ?u= query parameter first (safest against path normalization)
   let targetUrl = url.searchParams.get('url') || url.searchParams.get('u');
   if (!targetUrl) {
     // 2. Fall back to /proxy/<targetUrl> in the pathname
@@ -56,9 +50,9 @@ export async function onRequest(context) {
   }
 
   // ── Validate target host ──
-  let targetHost;
+  let parsedTarget;
   try {
-    targetHost = new URL(targetUrl).hostname;
+    parsedTarget = new URL(targetUrl);
   } catch {
     return new Response(
       JSON.stringify({ error: 'Invalid target URL: ' + targetUrl }),
@@ -66,9 +60,27 @@ export async function onRequest(context) {
     );
   }
 
-  if (!targetHost.endsWith('.jio.com')) {
+  if (parsedTarget.protocol !== 'http:' && parsedTarget.protocol !== 'https:') {
     return new Response(
-      JSON.stringify({ error: `Forbidden host: ${targetHost}` }),
+      JSON.stringify({ error: 'Only HTTP/HTTPS URLs are supported' }),
+      { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
+    );
+  }
+
+  const targetHost = parsedTarget.hostname.toLowerCase();
+  // Prevent SSRF / local network access
+  if (
+    targetHost === 'localhost' ||
+    targetHost === '127.0.0.1' ||
+    targetHost === '0.0.0.0' ||
+    targetHost === '::1' ||
+    targetHost.startsWith('192.168.') ||
+    targetHost.startsWith('10.') ||
+    targetHost.startsWith('172.16.') ||
+    targetHost === '169.254.169.254'
+  ) {
+    return new Response(
+      JSON.stringify({ error: `Forbidden target host: ${targetHost}` }),
       { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
     );
   }
@@ -81,6 +93,12 @@ export async function onRequest(context) {
   ]);
   for (const [k, v] of request.headers.entries()) {
     if (!skipHeaders.has(k.toLowerCase())) fwdHeaders.set(k, v);
+  }
+
+  // Ensure Jio-compatible User-Agent for upstream requests if browser UA is sent
+  const currentUa = fwdHeaders.get('user-agent') || '';
+  if (!currentUa || currentUa.includes('Mozilla/')) {
+    fwdHeaders.set('User-Agent', 'plaYtv/7.1.8 (Linux;Android 13) ExoPlayerLib/1.3.1');
   }
 
   const fwdInit = {
@@ -106,6 +124,7 @@ export async function onRequest(context) {
   Object.entries(corsHeaders).forEach(([k, v]) => respHeaders.set(k, v));
   respHeaders.delete('x-frame-options');
   respHeaders.delete('content-security-policy');
+  respHeaders.delete('content-encoding');
 
   return new Response(upstream.body, {
     status: upstream.status,

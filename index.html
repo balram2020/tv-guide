@@ -1023,6 +1023,20 @@ const HLS_CONFIG = {
   startFragPrefetch: true
 };
 
+// ── STREAM AUTH TOKEN & SIGNING HELPERS ──
+function tokenOf(url) {
+  if (!url) return '';
+  const m = /[?&](__hdnea__=[^&]+)/.exec(url) || /[?&](hdnts=[^&]+)/.exec(url);
+  return m ? m[1] : '';
+}
+
+function withToken(u, tok) {
+  if (!tok || !u) return u;
+  const key = tok.split('=')[0];
+  if (u.indexOf(key) >= 0 || u.indexOf('.pkey') >= 0) return u;
+  return u + (u.indexOf('?') < 0 ? '?' : '&') + tok;
+}
+
 function buildHlsErrorUI(id, title, desc, url) {
   return `
     <div style="font-size:1.8rem;margin-bottom:4px">⚠️</div>
@@ -1064,9 +1078,15 @@ function playCh(id) {
 
   if (Hls.isSupported()) {
     const opts = Object.assign({}, HLS_CONFIG);
-    if (ch.ua) {
-      opts.xhrSetup = function(xhr) {
-        xhr.setRequestHeader("User-Agent", ch.ua);
+    const tok = tokenOf(ch.url);
+    if (tok || ch.ua) {
+      opts.xhrSetup = function(xhr, u) {
+        if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0 && u.indexOf('.pkey') < 0) {
+          xhr.open('GET', withToken(u, tok), true);
+        }
+        if (ch.ua) {
+          try { xhr.setRequestHeader("User-Agent", ch.ua); } catch(e){}
+        }
       };
     }
     hls = new Hls(opts);
@@ -1157,9 +1177,15 @@ function playChInTheater(id) {
 
   if (Hls.isSupported()) {
     const opts = Object.assign({}, HLS_CONFIG);
-    if (ch.ua) {
-      opts.xhrSetup = function(xhr) {
-        xhr.setRequestHeader("User-Agent", ch.ua);
+    const tok = tokenOf(ch.url);
+    if (tok || ch.ua) {
+      opts.xhrSetup = function(xhr, u) {
+        if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0 && u.indexOf('.pkey') < 0) {
+          xhr.open('GET', withToken(u, tok), true);
+        }
+        if (ch.ua) {
+          try { xhr.setRequestHeader("User-Agent", ch.ua); } catch(e){}
+        }
       };
     }
     echoHls = new Hls(opts);
@@ -1678,19 +1704,21 @@ const JIO = {
   get lb()           { return localStorage.getItem('jio_lb') || '1' },
   get uniqueId()     { return localStorage.getItem('jio_uid') || '' },
   get subscriberId() { return localStorage.getItem('jio_sub') || '' },
+  get userId()       { return localStorage.getItem('jio_userId') || this.subscriberId || this.uniqueId },
   get deviceId()     { return localStorage.getItem('jio_dev') || (() => { const d = Math.random().toString(36).slice(2,18); localStorage.setItem('jio_dev',d); return d; })() },
   get loggedIn()     { return !!this.sso },
 
-  save(sso, auth, refresh, lb, uid, sub) {
+  save(sso, auth, refresh, lb, uid, sub, userId) {
     localStorage.setItem('jio_sso', sso);
     localStorage.setItem('jio_auth', auth);
     localStorage.setItem('jio_refresh', refresh);
     localStorage.setItem('jio_lb', lb || '1');
-    localStorage.setItem('jio_uid', uid);
-    localStorage.setItem('jio_sub', sub);
+    localStorage.setItem('jio_uid', uid || '');
+    localStorage.setItem('jio_sub', sub || '');
+    localStorage.setItem('jio_userId', userId || sub || uid || '');
   },
   clear() {
-    ['jio_sso','jio_auth','jio_refresh','jio_lb','jio_uid','jio_sub'].forEach(k => localStorage.removeItem(k));
+    ['jio_sso','jio_auth','jio_refresh','jio_lb','jio_uid','jio_sub','jio_userId'].forEach(k => localStorage.removeItem(k));
     jioChannels = [];
   },
 
@@ -1704,19 +1732,53 @@ const JIO = {
       'User-Agent': this.UA,
     };
   },
-  authHeaders(channelId = '') {
+  sdkHeaders(channelId = '') {
     return {
       'appkey': this.APP_KEY, 'devicetype': 'phone', 'os': 'android',
       'deviceId': this.deviceId, 'versionCode': this.VER_CODE,
-      'isott': 'false', 'dm': 'Phone', 'x-platform': 'android_mobile',
-      'uniqueId': this.uniqueId, 'usergroup': this.USER_GROUP,
-      'languageId': '6', 'userId': this.subscriberId,
+      'osVersion': '11', 'isott': 'false', 'dm': 'LG webOS TV',
+      'x-platform': 'android_mobile', 'uniqueId': this.uniqueId,
+      'usergroup': this.USER_GROUP, 'languageId': '6',
+      'userId': this.subscriberId,
       'sid': crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
-      'crmid': this.subscriberId, 'channel_id': channelId || '',
+      'crmid': this.subscriberId, 'channel_id': String(channelId || ''),
       'langid': '', 'camid': '', 'accesstoken': this.auth,
       'ssotoken': this.sso, 'subscriberId': this.subscriberId,
-      'lbcookie': this.lb, 'User-Agent': this.UA,
+      'lbcookie': this.lb || '1', 'User-Agent': this.UA,
     };
+  },
+  authHeaders(channelId = '0', srno = 0) {
+    return {
+      'uniqueId': this.uniqueId, 'ssotoken': this.sso, 'accesstoken': this.auth,
+      'subscriberId': this.subscriberId, 'deviceId': this.deviceId,
+      'userId': this.userId || this.subscriberId,
+      'os': 'android', 'devicetype': 'phone', 'appkey': this.APP_KEY,
+      'appName': this.APP_NAME, 'versioncode': this.VER_CODE, 'versionCode': this.VER_CODE,
+      'osVersion': '11', 'x-platform': 'android', 'usergroup': this.USER_GROUP,
+      'lbcookie': this.lb || '1', 'channelid': String(channelId || '0'),
+      'srno': String(srno || 0), 'crmid': this.subscriberId, 'User-Agent': this.UA,
+    };
+  },
+  async beginSession() {
+    if (!this.loggedIn) return;
+    const h = this.authHeaders();
+    const allowed = ['uniqueId', 'ssotoken', 'accesstoken', 'deviceId', 'os', 'devicetype', 'appkey', 'appName', 'versioncode', 'x-platform', 'usergroup', 'lbcookie', 'channelid', 'srno'];
+    const hdr = {};
+    allowed.forEach(k => { if (h[k]) hdr[k] = h[k]; });
+    const target = 'https://tv.media.jio.com/apis/v3.0/beginsession/begin?langId=6';
+    try {
+      let r = await fetch(this._p(target), { headers: hdr });
+      if (r.status === 419) {
+        if (await this.refreshAuth()) {
+          const h2 = this.authHeaders();
+          const hdr2 = {};
+          allowed.forEach(k => { if (h2[k]) hdr2[k] = h2[k]; });
+          await fetch(this._p(target), { headers: hdr2 });
+        }
+      }
+    } catch(e) {
+      console.warn('beginSession notice:', e);
+    }
   },
 
   // Wrap a JioTV URL through the CORS proxy using query param (?url=...)
@@ -1817,14 +1879,16 @@ const JIO = {
     const ssoToken   = d.ssoToken  || '';
     const refreshTok = d.refreshToken || '';
     const lb         = d.lbCookie || '1';
-    const uid        = (user && user.unique) || '';
+    const uniqueId   = (user && user.unique) || '';
     const sub        = (user && user.subscriberId) || '';
+    const userId     = (user && user.uid) || sub || uniqueId;
 
     if (!authToken || !ssoToken) {
       console.error('verifyOTP raw response:', raw);
       throw new Error('Sign-in response missing token: ' + (raw || '').slice(0, 120));
     }
-    this.save(ssoToken, authToken, refreshTok, lb, uid, sub);
+    this.save(ssoToken, authToken, refreshTok, lb, uniqueId, sub, userId);
+    await this.beginSession().catch(e => console.warn('beginSession notice:', e));
     return { success: true };
   },
 
@@ -1846,8 +1910,9 @@ const JIO = {
     if (!d.ssoToken || !d.authToken) {
       throw new Error('Other devices were logged out. Please request a new OTP to finish sign-in.');
     }
-    this.save(d.ssoToken, d.authToken, d.refreshToken || '', p.lb, p.unique, p.sub);
+    this.save(d.ssoToken, d.authToken, d.refreshToken || '', p.lb, p.unique, p.sub, p.uid);
     this._pending = null;
+    await this.beginSession().catch(e => console.warn('beginSession notice:', e));
     return d;
   },
 
@@ -1916,17 +1981,18 @@ const JIO = {
 
   // ── STREAM URL ──
   async getStreamUrl(jioId) {
+    await this.beginSession().catch(() => {});
     const body = new URLSearchParams({
-      stream_type: 'Seek', channel_id: jioId,
+      stream_type: 'Seek', channel_id: String(jioId),
       programId: '0', showtime: '000000', srno: '20', begin: '', end: ''
     }).toString();
-    const h = this.authHeaders(jioId);
+    const h = this.sdkHeaders(jioId);
     h['Content-Type'] = 'application/x-www-form-urlencoded';
     const targetUrl = this.PLAY_BASE + 'v1.1/geturl?langId=6';
     let r = await fetch(this._p(targetUrl), { method: 'POST', headers: h, body });
     if (r.status === 419) {
       await this.refreshAuth();
-      const retryH = this.authHeaders(jioId);
+      const retryH = this.sdkHeaders(jioId);
       retryH['Content-Type'] = 'application/x-www-form-urlencoded';
       r = await fetch(this._p(targetUrl), { method: 'POST', headers: retryH, body });
     }
@@ -2138,6 +2204,17 @@ async function playJioChannel(ch) {
     showToast('📡 Fetching JioTV stream…');
     const { url, dash, license } = await JIO.getStreamUrl(ch.jioId);
     ch.url = url; // cache for retry/VLC
+    if (dash) {
+      const msg = 'This channel is protected with DRM (MPEG-DASH/Widevine) and requires the official JioTV app.';
+      showToast('🔒 ' + msg);
+      if (!inTheater) {
+        const ov = document.getElementById('vidOv');
+        ov.style.display = 'flex';
+        ov.innerHTML = buildHlsErrorUI(ch.id, 'DRM Protected Stream', msg, '');
+      }
+      setDot(ch.id, 'error');
+      return;
+    }
     if (inTheater) {
       document.getElementById('pUrl') && (document.getElementById('pUrl').textContent = url);
       _loadHlsInTheater(ch, url);
@@ -2158,6 +2235,65 @@ async function playJioChannel(ch) {
   }
 }
 
+function getJioHlsConfig(channel, streamUrl) {
+  const tok = tokenOf(streamUrl);
+  const chJioId = channel.jioId || channel.id;
+  const BaseLoader = (Hls && Hls.DefaultConfig && Hls.DefaultConfig.loader) || class {};
+
+  class JioKeyLoader extends BaseLoader {
+    load(context, config, callbacks) {
+      const targetUrl = String(context.url || '');
+      // When Hls.js requests an AES-128 key (.pkey), proxy it with Jio authHeaders
+      if (targetUrl.indexOf('.pkey') >= 0) {
+        const t0 = performance.now();
+        const proxyUrl = JIO._p(targetUrl);
+        const headers = JIO.authHeaders(chJioId, 0);
+        fetch(proxyUrl, { headers })
+          .then(res => {
+            if (!res.ok) throw new Error('Key HTTP ' + res.status);
+            return res.arrayBuffer();
+          })
+          .then(data => {
+            const t1 = performance.now();
+            callbacks.onSuccess(
+              { url: targetUrl, data: data },
+              {
+                aborted: false,
+                loaded: data.byteLength,
+                retry: 0,
+                total: data.byteLength,
+                chunkCount: 1,
+                bwEstimate: 0,
+                loading: { start: t0, first: t1, end: t1 },
+                parsing: { start: t1, end: t1 },
+                buffering: { start: 0, first: 0, end: 0 }
+              },
+              context,
+              null
+            );
+          })
+          .catch(err => {
+            console.error('Jio key loader error:', err);
+            callbacks.onError({ code: 0, text: String(err && err.message) }, context, null, {});
+          });
+        return;
+      }
+      return super.load(context, config, callbacks);
+    }
+  }
+
+  return {
+    ...HLS_CONFIG,
+    loader: JioKeyLoader,
+    enableWorker: false,
+    xhrSetup: function(xhr, u) {
+      if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0 && u.indexOf('.pkey') < 0) {
+        xhr.open('GET', withToken(u, tok), true);
+      }
+    }
+  };
+}
+
 function _loadHlsDesktop(ch, url) {
   const vid = document.getElementById('vid');
   const ov = document.getElementById('vidOv');
@@ -2165,15 +2301,26 @@ function _loadHlsDesktop(ch, url) {
   ov.innerHTML = '<div class="spinner"></div><span>Buffering JioTV…</span>';
   if (hls) { hls.destroy(); hls = null; }
   if (Hls.isSupported()) {
-    hls = new Hls({ ...HLS_CONFIG, xhrSetup: xhr => { xhr.setRequestHeader('User-Agent', JIO.UA); } });
+    hls = new Hls(getJioHlsConfig(ch, url));
     hls.loadSource(url);
     hls.attachMedia(vid);
-    hls.on(Hls.Events.MANIFEST_PARSED, () => { ov.style.display = 'none'; vid.play().catch(()=>{}); setDot(ch.id,'live'); requestWake(); });
+    hls.on(Hls.Events.MANIFEST_PARSED, () => {
+      ov.style.display = 'none';
+      vid.play().catch(()=>{});
+      setDot(ch.id, 'live');
+      requestWake();
+    });
     hls.on(Hls.Events.ERROR, (e, d) => {
-      if (d.fatal) { ov.style.display='flex'; ov.innerHTML=buildHlsErrorUI(ch.id,'JioTV Error',d.details||'Stream failed',''); setDot(ch.id,'error'); }
+      if (d.fatal) {
+        ov.style.display = 'flex';
+        ov.innerHTML = buildHlsErrorUI(ch.id, 'JioTV Error', d.details || 'Stream failed', '');
+        setDot(ch.id, 'error');
+      }
     });
   } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
-    vid.src = url; ov.style.display = 'none'; vid.play().catch(()=>{});
+    vid.src = url;
+    ov.style.display = 'none';
+    vid.play().catch(()=>{});
   }
 }
 
@@ -2181,16 +2328,28 @@ function _loadHlsInTheater(ch, url) {
   const vid = document.getElementById('echoVid');
   if (echoHls) { echoHls.destroy(); echoHls = null; }
   if (Hls.isSupported()) {
-    echoHls = new Hls({ ...HLS_CONFIG, xhrSetup: xhr => { xhr.setRequestHeader('User-Agent', JIO.UA); } });
+    echoHls = new Hls(getJioHlsConfig(ch, url));
     echoHls.loadSource(url);
     echoHls.attachMedia(vid);
     echoHls.on(Hls.Events.MANIFEST_PARSED, () => {
-      vid.play().catch(() => { vid.muted=true; vid.play().then(()=>{ document.getElementById('echoUnmuteBtn').style.display='block'; }).catch(()=>{}); });
-      setDot(ch.id,'live'); requestWake();
+      vid.play().catch(() => {
+        vid.muted = true;
+        vid.play().then(() => {
+          document.getElementById('echoUnmuteBtn').style.display = 'block';
+        }).catch(()=>{});
+      });
+      setDot(ch.id, 'live');
+      requestWake();
     });
-    echoHls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) { showToast('⚠️ JioTV stream error: ' + d.details); setDot(ch.id,'error'); } });
+    echoHls.on(Hls.Events.ERROR, (e, d) => {
+      if (d.fatal) {
+        showToast('⚠️ JioTV stream error: ' + (d.details || 'Playback error'));
+        setDot(ch.id, 'error');
+      }
+    });
   } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
-    vid.src = url; vid.play().catch(()=>{});
+    vid.src = url;
+    vid.play().catch(()=>{});
   }
 }
 
