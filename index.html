@@ -440,18 +440,6 @@ body.echo-mode .player-panel{display:none !important}
   box-shadow: 0 4px 16px rgba(255,107,53,0.35); transition: opacity .2s, transform .1s;
 }
 .unlock-btn:active { transform: scale(0.98); opacity: 0.9; }
-.setup-toggle {
-  margin-top: 14px; font-size: 0.74rem; color: #00a8e8; cursor: pointer;
-  text-decoration: underline; opacity: 0.85; transition: opacity .2s;
-}
-.setup-toggle:hover { opacity: 1; }
-.setup-box {
-  margin-top: 12px; padding: 12px; background: #111118;
-  border: 1px dashed #333344; border-radius: 12px;
-}
-.qr-img { width: 140px; height: 140px; border-radius: 8px; margin: 6px auto; display: block; }
-.secret-text { font-size: 0.75rem; color: #e4e4e7; word-break: break-all; margin-top: 6px; }
-.secret-text code { background: #1e1e2c; padding: 2px 6px; border-radius: 4px; color: #ff9a00; font-weight: bold; }
 .lock-chip {
   background: rgba(239, 68, 68, 0.12); border: 1px solid rgba(239, 68, 68, 0.3);
   color: #ef4444; font-size: .72rem; padding: 5px 9px; border-radius: 8px;
@@ -473,7 +461,7 @@ body.echo-mode .player-panel{display:none !important}
     <p class="lock-sub">Enter your Master PIN & 6-digit Authenticator Code to unlock this portal.</p>
 
     <div class="lock-step">
-      <label class="lock-label">Step 1: Master PIN (Default: 2026)</label>
+      <label class="lock-label">Step 1: Master PIN</label>
       <div class="pin-display" id="pinDisplay">
         <span class="pin-dot" id="dot0"></span>
         <span class="pin-dot" id="dot1"></span>
@@ -504,15 +492,6 @@ body.echo-mode .player-panel{display:none !important}
     <div id="lockError" class="lock-error" style="display:none;"></div>
 
     <button type="button" class="unlock-btn" onclick="verifyAndUnlock()">🔓 Verify & Access Portal</button>
-
-    <div class="setup-toggle" onclick="toggleSetupModal()">📱 Setup Authenticator App / Scan QR</div>
-
-    <div id="setupBox" class="setup-box" style="display:none;">
-      <p style="font-size:0.75rem; color:#aaa; margin-bottom:8px;">Scan with Google Authenticator, Microsoft Authenticator, or Apple Passwords:</p>
-      <img src="https://api.qrserver.com/v1/create-qr-code/?size=160x160&data=otpauth%3A%2F%2Ftotp%2FTV%2520Guide%3ABalram%3Fsecret%3D2GXW2DIGXSGDTVEH%26issuer%3DTV%2520Guide" class="qr-img" alt="2FA QR Code" />
-      <div class="secret-text">Secret Key: <code>2GXW2DIGXSGDTVEH</code></div>
-      <p style="font-size:0.72rem; color:#888; margin-top:6px;">Account: <b>TV Guide (Balram)</b></p>
-    </div>
   </div>
 </div>
 
@@ -1383,10 +1362,6 @@ function backspacePin() {
   }
 }
 
-function toggleSetupModal() {
-  const box = document.getElementById("setupBox");
-  box.style.display = (box.style.display === "none") ? "block" : "none";
-}
 
 async function decryptTotpSecret(pin) {
   try {
