@@ -1746,13 +1746,14 @@ const JIO = {
 
   // ── LOGIN FLOW ──
   async sendOtp(phone) {
+    const encodedPhone = btoa('+91' + phone);
     const { code, data, raw } = await this.post(
-      this.LOGIN_BASE + 'v1.3/validateMobile/sendOTP',
-      { number: '91' + phone },
+      this.LOGIN_BASE + 'v1/loginotp/send',
+      { number: encodedPhone },
       this.loginHeaders()
     );
-    // 200 or 204 = OTP sent successfully; anything else = error
-    if (code !== 200 && code !== 204 && code !== 202) {
+    // 200 or 204 = OTP sent successfully
+    if (code < 200 || code > 299) {
       const msg = data?.message || data?.errorMessage || data?._raw || `Server returned HTTP ${code}`;
       throw new Error(msg);
     }
@@ -1760,26 +1761,41 @@ const JIO = {
   },
 
   async verifyOtp(phone, otp) {
+    const encodedPhone = btoa('+91' + phone);
+    const body = {
+      number: encodedPhone,
+      otp: otp,
+      deviceInfo: {
+        consumptionDeviceName: 'Chrome Web',
+        info: {
+          type: 'android',
+          platform: { name: 'webos' },
+          androidId: this.deviceId
+        }
+      }
+    };
     const { code, data, raw } = await this.post(
-      this.LOGIN_BASE + 'v1.3/validateMobile/verifyOTP',
-      { number: '91' + phone, otp },
+      this.LOGIN_BASE + 'v2/loginotp/verify',
+      body,
       this.loginHeaders()
     );
-    if (code !== 200 && code !== 201) {
+    if (code < 200 || code > 299) {
       const msg = data?.message || data?.errorMessage || data?._raw || `HTTP ${code}`;
       throw new Error(msg);
     }
-    // Token extraction — handle multiple response shapes seen across JioTV API versions
-    const sess = data.sessionAttributes?.user || data.data || data;
-    const authToken  = sess.authToken   || data.authToken   || '';
-    const ssoToken   = sess.ssoToken    || data.ssoToken    || '';
-    const refreshTok = sess.refreshToken|| data.refreshToken|| '';
-    const lb         = sess.lbCookie    || data.lbCookie    || '1';
-    const uid        = sess.uniqueId    || data.uniqueId    || '';
-    const sub        = sess.subscriberId|| data.subscriberId|| '';
-    if (!authToken) {
+
+    const d = data.data || data;
+    const user = d.sessionAttributes && d.sessionAttributes.user;
+    const authToken  = d.authToken || '';
+    const ssoToken   = d.ssoToken  || '';
+    const refreshTok = d.refreshToken || '';
+    const lb         = d.lbCookie || '1';
+    const uid        = (user && user.unique) || '';
+    const sub        = (user && user.subscriberId) || '';
+
+    if (!authToken || !ssoToken) {
       console.error('verifyOTP raw response:', raw);
-      throw new Error('Sign-in succeeded but no auth token found. Raw: ' + (raw||'').slice(0,120));
+      throw new Error('Sign-in response missing token: ' + (raw || '').slice(0, 120));
     }
     this.save(ssoToken, authToken, refreshTok, lb, uid, sub);
     return data;
