@@ -1,0 +1,12 @@
+{
+  "name": "jiotv-proxy",
+  "version": "1.0.0",
+  "description": "CORS proxy for JioTV API — routes browser requests from balram2020.github.io to JioTV servers",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "devDependencies": {
+    "wrangler": "^3.0.0"
+  }
+}

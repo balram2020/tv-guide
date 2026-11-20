@@ -1641,6 +1641,9 @@ const JIO = {
   APP_NAME:   'RJIL_JioTV',
   USER_GROUP: 'tvYR7NSNn7rymo3F',
   VER_CODE:   '424',
+  // CORS proxy — routes browser requests to JioTV servers
+  // Replace this URL after deploying jiotv-proxy/worker.js to Cloudflare Workers
+  PROXY:      'https://jiotv-proxy.balram2020.workers.dev/proxy/',
   LOGIN_BASE: 'https://jiotvapi.media.jio.com/userservice/apis/',
   LISTS_BASE: 'https://jiotvapi.cdn.jio.com/apis/',
   PLAY_BASE:  'https://jiotvapi.media.jio.com/playback/apis/',
@@ -1695,6 +1698,9 @@ const JIO = {
     };
   },
 
+  // Wrap a JioTV URL through the CORS proxy
+  _p(url) { return this.PROXY + url; },
+
   // Safe JSON parse — JioTV can return 204 (empty) or plain-text error pages
   _parse(t) {
     if (!t || !t.trim()) return {};
@@ -1705,7 +1711,7 @@ const JIO = {
   async post(url, body, headers) {
     let r, t;
     try {
-      r = await fetch(url, { method: 'POST', body: JSON.stringify(body), headers: { ...headers } });
+      r = await fetch(this._p(url), { method: 'POST', body: JSON.stringify(body), headers: { ...headers } });
       t = await r.text();
     } catch(e) {
       // Network / CORS failure
@@ -1717,7 +1723,7 @@ const JIO = {
   async get(url, headers) {
     let r, t;
     try {
-      r = await fetch(url, { headers: { ...headers } });
+      r = await fetch(this._p(url), { headers: { ...headers } });
       t = await r.text();
     } catch(e) {
       throw new Error('Network error — JioTV API unreachable. ' + e.message);
