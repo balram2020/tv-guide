@@ -2241,44 +2241,131 @@ function getJioHlsConfig(channel, streamUrl) {
   const BaseLoader = (Hls && Hls.DefaultConfig && Hls.DefaultConfig.loader) || class {};
 
   class JioKeyLoader extends BaseLoader {
-    load(context, config, callbacks) {
+    async load(context, config, callbacks) {
       const targetUrl = String(context.url || '');
-      // When Hls.js requests an AES-128 key (.pkey), proxy it with Jio authHeaders
-      if (targetUrl.indexOf('.pkey') >= 0) {
-        const t0 = performance.now();
-        const proxyUrl = JIO._p(targetUrl);
-        const headers = JIO.authHeaders(chJioId, 0);
-        fetch(proxyUrl, { headers })
-          .then(res => {
-            if (!res.ok) throw new Error('Key HTTP ' + res.status);
-            return res.arrayBuffer();
-          })
-          .then(data => {
-            const t1 = performance.now();
-            callbacks.onSuccess(
-              { url: targetUrl, data: data },
-              {
-                aborted: false,
-                loaded: data.byteLength,
-                retry: 0,
-                total: data.byteLength,
-                chunkCount: 1,
-                bwEstimate: 0,
-                loading: { start: t0, first: t1, end: t1 },
-                parsing: { start: t1, end: t1 },
-                buffering: { start: 0, first: 0, end: 0 }
-              },
-              context,
-              null
-            );
-          })
-          .catch(err => {
-            console.error('Jio key loader error:', err);
-            callbacks.onError({ code: 0, text: String(err && err.message) }, context, null, {});
-          });
-        return;
+      const isKey = Boolean(context.keyInfo) ||
+                    context.type === 'key' ||
+                    (context.frag && context.frag.type === 'key') ||
+                    targetUrl.indexOf('.pkey') >= 0 ||
+                    targetUrl.indexOf('.key') >= 0 ||
+                    targetUrl.indexOf('/getkey') >= 0;
+
+      if (!isKey) {
+        return super.load(context, config, callbacks);
       }
-      return super.load(context, config, callbacks);
+
+      const t0 = performance.now();
+      // Ensure target URL includes Akamai token if stream has one
+      const keyUrlWithToken = (tok && targetUrl.indexOf('__hdnea__') < 0 && targetUrl.indexOf('hdnts=') < 0)
+        ? withToken(targetUrl, tok)
+        : targetUrl;
+
+      // Clean headers for browser fetch (browser rejects custom User-Agent in fetch())
+      const buildCleanHeaders = () => {
+        const raw = JIO.authHeaders(chJioId, 0);
+        const clean = {};
+        Object.keys(raw).forEach(k => {
+          if (k.toLowerCase() !== 'user-agent') clean[k] = raw[k];
+        });
+        return clean;
+      };
+
+      let keyBuf = null;
+      let lastStatus = 0;
+      let lastErrText = '';
+
+      // Helper to decode 16-byte buffer or base64 string
+      const toKeyBuffer = async (res) => {
+        const rawBuf = await res.arrayBuffer();
+        if (rawBuf.byteLength === 16) return rawBuf;
+        // Check if returned as base64 string (24 bytes)
+        if (rawBuf.byteLength >= 22 && rawBuf.byteLength <= 26) {
+          try {
+            const txt = new TextDecoder().decode(rawBuf).trim();
+            if (/^[A-Za-z0-9+/=]+$/.test(txt)) {
+              const bin = atob(txt);
+              if (bin.length === 16) {
+                const u = new Uint8Array(16);
+                for (let i = 0; i < 16; i++) u[i] = bin.charCodeAt(i);
+                return u.buffer;
+              }
+            }
+          } catch(e) {}
+        }
+        return rawBuf;
+      };
+
+      // Attempt 1: Fetch via Cloudflare Pages CORS proxy with Jio auth headers
+      try {
+        const proxyUrl = JIO._p(keyUrlWithToken);
+        let res = await fetch(proxyUrl, { headers: buildCleanHeaders() });
+        lastStatus = res.status;
+        if (res.status === 419 || res.status === 401) {
+          if (await JIO.refreshAuth()) {
+            res = await fetch(proxyUrl, { headers: buildCleanHeaders() });
+            lastStatus = res.status;
+          }
+        }
+        if (res.ok) {
+          const buf = await toKeyBuffer(res);
+          if (buf.byteLength === 16) keyBuf = buf;
+        } else {
+          lastErrText = await res.text().catch(() => '');
+        }
+      } catch(e) {
+        lastErrText = e.message;
+      }
+
+      // Attempt 2: Direct fetch (for clear CDN keys that allow CORS)
+      if (!keyBuf) {
+        try {
+          const res = await fetch(keyUrlWithToken);
+          if (res.ok) {
+            const buf = await toKeyBuffer(res);
+            if (buf.byteLength === 16) keyBuf = buf;
+          }
+        } catch(e) {}
+      }
+
+      // Attempt 3: Fetch via proxy without custom auth headers (in case server rejects them)
+      if (!keyBuf) {
+        try {
+          const proxyUrl = JIO._p(keyUrlWithToken);
+          const res = await fetch(proxyUrl);
+          if (res.ok) {
+            const buf = await toKeyBuffer(res);
+            if (buf.byteLength === 16) keyBuf = buf;
+          }
+        } catch(e) {}
+      }
+
+      if (keyBuf && keyBuf.byteLength === 16) {
+        const t1 = performance.now();
+        callbacks.onSuccess(
+          { url: targetUrl, data: keyBuf },
+          {
+            aborted: false,
+            loaded: keyBuf.byteLength,
+            retry: 0,
+            total: keyBuf.byteLength,
+            chunkCount: 1,
+            bwEstimate: 0,
+            loading: { start: t0, first: t1, end: t1 },
+            parsing: { start: t1, end: t1 },
+            buffering: { start: 0, first: 0, end: 0 }
+          },
+          context,
+          null
+        );
+      } else {
+        console.error('JioKeyLoader failed to load 16-byte key for:', targetUrl, 'status:', lastStatus, lastErrText);
+        callbacks.onError(
+          { code: lastStatus || 500, text: lastErrText || 'Failed to decrypt stream key' },
+          context,
+          null,
+          {}
+        );
+      }
     }
   }
 
@@ -2287,7 +2374,7 @@ function getJioHlsConfig(channel, streamUrl) {
     loader: JioKeyLoader,
     enableWorker: false,
     xhrSetup: function(xhr, u) {
-      if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0 && u.indexOf('.pkey') < 0) {
+      if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0 && u.indexOf('.pkey') < 0 && u.indexOf('/getkey') < 0) {
         xhr.open('GET', withToken(u, tok), true);
       }
     }
