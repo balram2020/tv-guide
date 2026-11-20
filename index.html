@@ -1871,17 +1871,44 @@ const JIO = {
 
   // ── CHANNEL LIST ──
   async fetchChannels() {
-    const h = this.authHeaders();
-    let { code, data } = await this.get(this.LISTS_BASE + 'v1.3/getallchannels?langId=6', h);
-    if (code === 419) { await this.refreshAuth(); ({ code, data } = await this.get(this.LISTS_BASE + 'v1.3/getallchannels?langId=6', h)); }
-    if (code !== 200) throw new Error(`Channel list HTTP ${code}`);
-    return (data.result || []).map(x => ({
+    const listHeaders = {
+      'usergroup': this.USER_GROUP,
+      'usertype': 'jio',
+      'appkey': this.APP_KEY,
+      'devicetype': 'phone',
+      'os': 'android',
+      'deviceId': '55a8a2b6299fb995',
+      'appversioncode': '404',
+      'appversion': '7.1.7.P.20260225.1',
+      'lbcookie': '1'
+    };
+    const target = this.LISTS_BASE + 'v3.1/getMobileChannelList/get/?langId=6&os=android&devicetype=phone&usertype=jio&version=404';
+
+    let arr = null;
+    // Jio CDN sends Access-Control-Allow-Origin: * natively, so fetch directly for speed
+    try {
+      const r = await fetch(target, { headers: listHeaders });
+      if (r.ok) {
+        const j = await r.json();
+        if (Array.isArray(j.result)) arr = j.result;
+      }
+    } catch(e) {
+      console.warn('Direct channel list fetch failed, falling back to proxy:', e);
+    }
+
+    if (!arr) {
+      const { code, data } = await this.get(target, listHeaders);
+      if (Array.isArray(data.result)) arr = data.result;
+      else throw new Error(data?.message || `Channels API returned HTTP ${code}`);
+    }
+
+    return arr.filter(x => !x.isHidden && x.channel_id).map(x => ({
       jioId: String(x.channel_id),
       name: String(x.channel_name),
       order: x.channel_order == null ? 1e9 : x.channel_order,
       lang: x.channelLanguageId | 0,
       hd: !!x.isHD,
-      logo: x.logoUrl ? 'https://jiotvimages.cdn.jio.com/dare_images/images/' + x.logoUrl : '',
+      logo: x.logoUrl ? 'https://jiotv.catchup.cdn.jio.com/dare_images/images/' + x.logoUrl : '',
       cat: x.channelCategoryId | 0,
       premium: !!x.is_premium,
     })).sort((a, b) => a.order - b.order);
@@ -1895,10 +1922,18 @@ const JIO = {
     }).toString();
     const h = this.authHeaders(jioId);
     h['Content-Type'] = 'application/x-www-form-urlencoded';
-    const stale = this.auth;
-    let r = await fetch(this.PLAY_BASE + 'v1.1/geturl?langId=6', { method: 'POST', headers: h, body });
-    if (r.status === 419) { await this.refreshAuth(); r = await fetch(this.PLAY_BASE + 'v1.1/geturl?langId=6', { method: 'POST', headers: h, body }); }
-    if (!r.ok) throw new Error(`Playback HTTP ${r.status}`);
+    const targetUrl = this.PLAY_BASE + 'v1.1/geturl?langId=6';
+    let r = await fetch(this._p(targetUrl), { method: 'POST', headers: h, body });
+    if (r.status === 419) {
+      await this.refreshAuth();
+      const retryH = this.authHeaders(jioId);
+      retryH['Content-Type'] = 'application/x-www-form-urlencoded';
+      r = await fetch(this._p(targetUrl), { method: 'POST', headers: retryH, body });
+    }
+    if (!r.ok) {
+      const errText = await r.text();
+      throw new Error(`Playback HTTP ${r.status}: ${errText.slice(0, 100)}`);
+    }
     const j = await r.json();
     const url = j.result || j.mpd?.result || '';
     if (!url) throw new Error(`No stream URL: ${j.message || j.code}`);
@@ -1959,7 +1994,7 @@ async function loadJioChannels(force = false) {
 
   const cached = localStorage.getItem('jio_channels');
   const cachedAt = Number(localStorage.getItem('jio_channels_at') || 0);
-  if (!force && cached && Date.now() - cachedAt < 6 * 3600_000) {
+  if (!force && cached && cached !== '[]' && JSON.parse(cached || '[]').length > 0 && Date.now() - cachedAt < 6 * 3600_000) {
     jioChannels = JSON.parse(cached);
     jioUiChannels = mapJioChannels(jioChannels);
     updateJioBadge();

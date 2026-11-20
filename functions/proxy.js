@@ -66,7 +66,7 @@ export async function onRequest(context) {
     );
   }
 
-  if (!JIO_ALLOWED_HOSTS.some(h => targetHost === h || targetHost.endsWith('.' + h))) {
+  if (!targetHost.endsWith('.jio.com')) {
     return new Response(
       JSON.stringify({ error: `Forbidden host: ${targetHost}` }),
       { status: 403, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
