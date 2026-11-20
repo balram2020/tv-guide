@@ -1706,8 +1706,13 @@ const JIO = {
     };
   },
 
-  // Wrap a JioTV URL through the CORS proxy
-  _p(url) { return this.PROXY + url; },
+  // Wrap a JioTV URL through the CORS proxy using query param (?url=...)
+  // This avoids Cloudflare path normalization stripping double slashes
+  _p(url) {
+    const base = this.PROXY.replace(/\/+$/, '');
+    const separator = base.includes('?') ? '&' : '?';
+    return `${base}${separator}url=${encodeURIComponent(url)}`;
+  },
 
   // Safe JSON parse — JioTV can return 204 (empty) or plain-text error pages
   _parse(t) {

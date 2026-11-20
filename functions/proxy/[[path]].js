@@ -28,18 +28,32 @@ export async function onRequest(context) {
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
-  // ── Extract target URL from path: /proxy/<target_url> ──
-  const pathname = url.pathname;
-  const prefix = '/proxy/';
-  const idx = pathname.indexOf(prefix);
-  if (idx === -1) {
+  // ── Extract target URL ──
+  // 1. Check ?url= query parameter first (safest against path normalization)
+  let targetUrl = url.searchParams.get('url') || url.searchParams.get('u');
+  if (!targetUrl) {
+    // 2. Fall back to /proxy/<targetUrl> in the pathname
+    const pathname = url.pathname;
+    const prefix = '/proxy/';
+    const idx = pathname.indexOf(prefix);
+    if (idx !== -1) {
+      let rest = pathname.slice(idx + prefix.length);
+      // Restore any collapsed protocol slashes (e.g. https:/jiotvapi -> https://jiotvapi)
+      if (rest.startsWith('https:/') && !rest.startsWith('https://')) {
+        rest = 'https://' + rest.slice(7);
+      } else if (rest.startsWith('http:/') && !rest.startsWith('http://')) {
+        rest = 'http://' + rest.slice(6);
+      }
+      targetUrl = rest + url.search;
+    }
+  }
+
+  if (!targetUrl) {
     return new Response(
-      JSON.stringify({ error: 'Usage: /proxy/<jiotv-api-url>' }),
+      JSON.stringify({ error: 'Usage: /proxy?url=<target_url>' }),
       { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } }
     );
   }
-
-  const targetUrl = pathname.slice(idx + prefix.length) + url.search;
 
   // ── Validate target host ──
   let targetHost;
