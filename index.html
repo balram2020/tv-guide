@@ -1033,7 +1033,7 @@ function tokenOf(url) {
 function withToken(u, tok) {
   if (!tok || !u) return u;
   const key = tok.split('=')[0];
-  if (u.indexOf(key) >= 0 || u.indexOf('.pkey') >= 0) return u;
+  if (u.indexOf(key) >= 0) return u;
   return u + (u.indexOf('?') < 0 ? '?' : '&') + tok;
 }
 
@@ -1081,7 +1081,7 @@ function playCh(id) {
     const tok = tokenOf(ch.url);
     if (tok || ch.ua) {
       opts.xhrSetup = function(xhr, u) {
-        if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0 && u.indexOf('.pkey') < 0) {
+        if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0) {
           xhr.open('GET', withToken(u, tok), true);
         }
         if (ch.ua) {
@@ -1180,7 +1180,7 @@ function playChInTheater(id) {
     const tok = tokenOf(ch.url);
     if (tok || ch.ua) {
       opts.xhrSetup = function(xhr, u) {
-        if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0 && u.indexOf('.pkey') < 0) {
+        if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0) {
           xhr.open('GET', withToken(u, tok), true);
         }
         if (ch.ua) {
@@ -2237,7 +2237,7 @@ async function playJioChannel(ch) {
 
 function getJioHlsConfig(channel, streamUrl) {
   const tok = tokenOf(streamUrl);
-  const chJioId = channel.jioId || channel.id;
+  const chJioId = channel ? (channel.jioId || channel.id) : '0';
   const BaseLoader = (Hls && Hls.DefaultConfig && Hls.DefaultConfig.loader) || class {};
 
   class JioKeyLoader extends BaseLoader {
@@ -2262,11 +2262,14 @@ function getJioHlsConfig(channel, streamUrl) {
 
       // Clean headers for browser fetch (browser rejects custom User-Agent in fetch())
       const buildCleanHeaders = () => {
-        const raw = JIO.authHeaders(chJioId, 0);
+        const raw = JIO.authHeaders(chJioId, '230203144000');
         const clean = {};
         Object.keys(raw).forEach(k => {
           if (k.toLowerCase() !== 'user-agent') clean[k] = raw[k];
         });
+        clean['channelId'] = String(chJioId);
+        clean['channelid'] = String(chJioId);
+        clean['srno'] = '230203144000';
         return clean;
       };
 
@@ -2274,28 +2277,56 @@ function getJioHlsConfig(channel, streamUrl) {
       let lastStatus = 0;
       let lastErrText = '';
 
-      // Helper to decode 16-byte buffer or base64 string
+      // Comprehensive 16-byte key decoder (handles binary, base64, hex, json, and trailing whitespace)
       const toKeyBuffer = async (res) => {
         const rawBuf = await res.arrayBuffer();
         if (rawBuf.byteLength === 16) return rawBuf;
-        // Check if returned as base64 string (24 bytes)
-        if (rawBuf.byteLength >= 22 && rawBuf.byteLength <= 26) {
-          try {
-            const txt = new TextDecoder().decode(rawBuf).trim();
-            if (/^[A-Za-z0-9+/=]+$/.test(txt)) {
-              const bin = atob(txt);
-              if (bin.length === 16) {
+        if (rawBuf.byteLength >= 16 && rawBuf.byteLength <= 18) {
+          return rawBuf.slice(0, 16);
+        }
+        try {
+          const txt = new TextDecoder().decode(rawBuf).trim();
+          // 1. Hex string (32 hex characters)
+          if (/^[0-9a-fA-F]{32}$/.test(txt)) {
+            const u = new Uint8Array(16);
+            for (let i = 0; i < 16; i++) u[i] = parseInt(txt.substr(i * 2, 2), 16);
+            return u.buffer;
+          }
+          // 2. Base64 string (22 to 26 characters)
+          if (/^[A-Za-z0-9+/=]{22,26}$/.test(txt)) {
+            const bin = atob(txt);
+            if (bin.length === 16) {
+              const u = new Uint8Array(16);
+              for (let i = 0; i < 16; i++) u[i] = bin.charCodeAt(i);
+              return u.buffer;
+            }
+          }
+          // 3. JSON payload
+          if (txt.startsWith('{') && txt.endsWith('}')) {
+            const j = JSON.parse(txt);
+            const val = j.key || j.pKey || j.result || j.data || j.license || j.stream_key || '';
+            if (typeof val === 'string') {
+              const cleanVal = val.trim();
+              if (/^[0-9a-fA-F]{32}$/.test(cleanVal)) {
                 const u = new Uint8Array(16);
-                for (let i = 0; i < 16; i++) u[i] = bin.charCodeAt(i);
+                for (let i = 0; i < 16; i++) u[i] = parseInt(cleanVal.substr(i * 2, 2), 16);
                 return u.buffer;
               }
+              if (/^[A-Za-z0-9+/=]{22,26}$/.test(cleanVal)) {
+                const bin = atob(cleanVal);
+                if (bin.length === 16) {
+                  const u = new Uint8Array(16);
+                  for (let i = 0; i < 16; i++) u[i] = bin.charCodeAt(i);
+                  return u.buffer;
+                }
+              }
             }
-          } catch(e) {}
-        }
+          }
+        } catch(e) {}
         return rawBuf;
       };
 
-      // Attempt 1: Fetch via Cloudflare Pages CORS proxy with Jio auth headers
+      // Attempt 1: Fetch via CORS proxy with Jio auth headers
       try {
         const proxyUrl = JIO._p(keyUrlWithToken);
         let res = await fetch(proxyUrl, { headers: buildCleanHeaders() });
@@ -2316,7 +2347,20 @@ function getJioHlsConfig(channel, streamUrl) {
         lastErrText = e.message;
       }
 
-      // Attempt 2: Direct fetch (for clear CDN keys that allow CORS)
+      // Attempt 2: Fetch via proxy without custom auth headers (in case upstream blocks custom headers)
+      if (!keyBuf) {
+        try {
+          const proxyUrl = JIO._p(keyUrlWithToken);
+          const res = await fetch(proxyUrl);
+          lastStatus = res.status;
+          if (res.ok) {
+            const buf = await toKeyBuffer(res);
+            if (buf.byteLength === 16) keyBuf = buf;
+          }
+        } catch(e) {}
+      }
+
+      // Attempt 3: Direct fetch (for public CDNs)
       if (!keyBuf) {
         try {
           const res = await fetch(keyUrlWithToken);
@@ -2327,27 +2371,22 @@ function getJioHlsConfig(channel, streamUrl) {
         } catch(e) {}
       }
 
-      // Attempt 3: Fetch via proxy without custom auth headers (in case server rejects them)
-      if (!keyBuf) {
-        try {
-          const proxyUrl = JIO._p(keyUrlWithToken);
-          const res = await fetch(proxyUrl);
-          if (res.ok) {
-            const buf = await toKeyBuffer(res);
-            if (buf.byteLength === 16) keyBuf = buf;
-          }
-        } catch(e) {}
-      }
-
       if (keyBuf && keyBuf.byteLength === 16) {
         const t1 = performance.now();
+        // Directly seed key onto fragment and keyInfo decryptdata for maximum player compatibility
+        if (context.keyInfo && context.keyInfo.decryptdata) {
+          context.keyInfo.decryptdata.key = new Uint8Array(keyBuf);
+        }
+        if (context.frag && context.frag.decryptdata) {
+          context.frag.decryptdata.key = new Uint8Array(keyBuf);
+        }
         callbacks.onSuccess(
-          { url: targetUrl, data: keyBuf },
+          { url: context.url, data: keyBuf },
           {
             aborted: false,
-            loaded: keyBuf.byteLength,
+            loaded: 16,
             retry: 0,
-            total: keyBuf.byteLength,
+            total: 16,
             chunkCount: 1,
             bwEstimate: 0,
             loading: { start: t0, first: t1, end: t1 },
@@ -2374,7 +2413,7 @@ function getJioHlsConfig(channel, streamUrl) {
     loader: JioKeyLoader,
     enableWorker: false,
     xhrSetup: function(xhr, u) {
-      if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0 && u.indexOf('.pkey') < 0 && u.indexOf('/getkey') < 0) {
+      if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0) {
         xhr.open('GET', withToken(u, tok), true);
       }
     }
@@ -2397,8 +2436,21 @@ function _loadHlsDesktop(ch, url) {
       setDot(ch.id, 'live');
       requestWake();
     });
-    hls.on(Hls.Events.ERROR, (e, d) => {
+    hls.on(Hls.Events.ERROR, async (e, d) => {
+      console.warn('JioTV Stream Error:', d.type, d.details, d);
       if (d.fatal) {
+        if (d.details === Hls.ErrorDetails.KEY_LOAD_ERROR || d.details === 'keyLoadError') {
+          console.log('Key load error encountered, attempting automatic session refresh...');
+          const ok = await JIO.refreshAuth().catch(() => false);
+          if (ok) {
+            try {
+              const res = await JIO.getStreamUrl(ch.jioId);
+              hls.loadSource(res.url);
+              hls.startLoad();
+              return;
+            } catch(err) {}
+          }
+        }
         ov.style.display = 'flex';
         ov.innerHTML = buildHlsErrorUI(ch.id, 'JioTV Error', d.details || 'Stream failed', '');
         setDot(ch.id, 'error');
@@ -2428,8 +2480,21 @@ function _loadHlsInTheater(ch, url) {
       setDot(ch.id, 'live');
       requestWake();
     });
-    echoHls.on(Hls.Events.ERROR, (e, d) => {
+    echoHls.on(Hls.Events.ERROR, async (e, d) => {
+      console.warn('JioTV Theater Stream Error:', d.type, d.details, d);
       if (d.fatal) {
+        if (d.details === Hls.ErrorDetails.KEY_LOAD_ERROR || d.details === 'keyLoadError') {
+          console.log('Key load error encountered in theater, attempting automatic session refresh...');
+          const ok = await JIO.refreshAuth().catch(() => false);
+          if (ok) {
+            try {
+              const res = await JIO.getStreamUrl(ch.jioId);
+              echoHls.loadSource(res.url);
+              echoHls.startLoad();
+              return;
+            } catch(err) {}
+          }
+        }
         showToast('⚠️ JioTV stream error: ' + (d.details || 'Playback error'));
         setDot(ch.id, 'error');
       }
