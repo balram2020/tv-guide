@@ -358,6 +358,52 @@ body.echo-mode .player-panel{display:none !important}
   #searchBox{width:130px}
 }
 
+/* ── JIOTV STYLES ── */
+.jio-tab{
+  background:linear-gradient(135deg,rgba(0,120,255,0.18),rgba(0,80,200,0.1));
+  border-color:rgba(0,120,255,0.4);
+}
+.jio-tab.active{
+  background:linear-gradient(135deg,rgba(0,120,255,0.28),rgba(0,80,200,0.2));
+  border-color:#4f8ef7;color:#fff;box-shadow:0 0 16px rgba(79,142,247,0.3);
+}
+.jio-login-btn{
+  background:linear-gradient(135deg,#4f8ef7,#2563eb);
+  border:none;color:#fff;padding:7px 14px;border-radius:8px;font-size:.8rem;
+  font-weight:700;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:5px;
+  box-shadow:0 2px 8px rgba(79,142,247,0.35);transition:all .2s;
+}
+.jio-login-btn:hover{opacity:.85}
+.jio-login-btn.signed-in{background:linear-gradient(135deg,#22c55e,#16a34a);box-shadow:0 0 10px rgba(34,197,94,0.4)}
+.jio-modal{background:var(--bg2);border:1px solid #2a4a8a;border-radius:16px;
+  padding:24px;width:400px;max-width:95vw;box-shadow:0 12px 48px rgba(0,0,0,.7),0 0 24px rgba(79,142,247,.18);
+  animation:cardFadeIn .3s ease-out;}
+.jio-modal h2{font-size:1.1rem;margin-bottom:6px;display:flex;align-items:center;gap:8px;
+  background:linear-gradient(135deg,#4f8ef7,#60a5fa);-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
+.jio-input{width:100%;height:44px;background:var(--bg3);border:1.5px solid var(--border);
+  border-radius:10px;color:var(--text);padding:0 12px;font-size:.92rem;outline:none;transition:border-color .2s;margin-bottom:10px;}
+.jio-input:focus{border-color:#4f8ef7;box-shadow:0 0 10px rgba(79,142,247,0.2);}
+.jio-input::placeholder{color:var(--text2)}
+.jio-btn{width:100%;height:44px;background:linear-gradient(135deg,#4f8ef7,#2563eb);
+  border:none;border-radius:10px;color:#fff;font-size:.95rem;font-weight:800;
+  cursor:pointer;box-shadow:0 4px 16px rgba(79,142,247,0.35);transition:opacity .2s,transform .1s;}
+.jio-btn:active{transform:scale(0.98);opacity:.9}
+.jio-btn:disabled{opacity:.5;cursor:not-allowed}
+.jio-btn-sec{width:100%;height:40px;background:var(--bg3);border:1px solid var(--border);
+  border-radius:10px;color:var(--text2);font-size:.85rem;cursor:pointer;margin-top:8px;transition:.15s;}
+.jio-btn-sec:hover{border-color:#4f8ef7;color:var(--text)}
+.jio-step-label{font-size:.72rem;font-weight:700;color:#a1a1aa;text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px;display:block}
+.jio-info{background:rgba(79,142,247,.1);border:1px solid rgba(79,142,247,.25);
+  border-radius:8px;padding:8px 11px;font-size:.74rem;color:#93c5fd;margin-bottom:12px;line-height:1.4}
+.jio-error{background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.3);
+  color:#ef4444;border-radius:8px;padding:7px 10px;font-size:.74rem;font-weight:600;margin-top:8px;animation:shake .3s;display:none}
+.jio-crown{font-size:.6rem;vertical-align:super;margin-left:2px;color:gold}
+.ctag.tj{background:rgba(79,142,247,.18);color:#60a5fa}
+.jio-loading-bar{height:3px;background:linear-gradient(90deg,#4f8ef7,#2563eb,#4f8ef7);
+  background-size:200%;animation:jioLoad 1.2s linear infinite;border-radius:3px;margin-bottom:14px;display:none}
+@keyframes jioLoad{0%{background-position:200% 0}100%{background-position:0 0}}
+.jio-ch-count{font-size:.68rem;color:#60a5fa;margin-left:4px}
+
 /* ── 2FA LOCK OVERLAY ── */
 .lock-overlay {
   position: fixed; inset: 0; background: rgba(8, 8, 14, 0.97);
@@ -522,7 +568,13 @@ body.echo-mode .player-panel{display:none !important}
     <button class="region-tab" id="tabGlobal" onclick="switchRegion('global')">
       <span>🌍</span> Global Channels <span class="badge" id="badgeGlobal">1,308</span>
     </button>
+    <button class="region-tab jio-tab" id="tabJio" onclick="switchRegion('jio')">
+      <span>📡</span> JioTV Premium <span class="badge" id="badgeJio">—</span>
+    </button>
   </div>
+  <button class="jio-login-btn" id="jioLoginBtn" onclick="openJioModal()" style="display:none">
+    🔑 Sign in to Jio
+  </button>
   <div class="region-indicator" id="regionSummary">
     Active: India TV (762 verified streams)
   </div>
@@ -674,6 +726,56 @@ body.echo-mode .player-panel{display:none !important}
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- ══════════════════════════════════════════════════════════════
+     JIOTV LOGIN MODAL
+     ══════════════════════════════════════════════════════════════ -->
+<div class="modal-bg hidden" id="jioModalBg" onclick="closeJioModalOut(event)">
+  <div class="jio-modal">
+    <h2>📡 JioTV Sign In</h2>
+    <p style="color:var(--text2);font-size:.8rem;margin-bottom:14px;line-height:1.4">
+      Sign in with your Jio mobile number to unlock 700+ live premium channels.
+      Your session is stored locally — never shared.
+    </p>
+    <div class="jio-loading-bar" id="jioLoadingBar"></div>
+
+    <!-- STEP 1: Phone number -->
+    <div id="jioStep1">
+      <div class="jio-info">📱 Enter your 10-digit Jio mobile number. An OTP will be sent via SMS.</div>
+      <label class="jio-step-label">Mobile Number</label>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+        <span style="color:var(--text2);font-size:.9rem;padding:0 4px;white-space:nowrap">🇮🇳 +91</span>
+        <input class="jio-input" id="jioPhone" type="tel" maxlength="10" inputmode="numeric"
+          placeholder="9XXXXXXXXX" style="margin-bottom:0;flex:1"
+          onkeydown="if(event.key==='Enter')sendJioOtp()"/>
+      </div>
+      <div id="jioErr1" class="jio-error"></div>
+      <button class="jio-btn" id="jioSendOtpBtn" onclick="sendJioOtp()">📲 Send OTP</button>
+      <button class="jio-btn-sec" onclick="closeJioModal()">Cancel</button>
+    </div>
+
+    <!-- STEP 2: OTP -->
+    <div id="jioStep2" style="display:none">
+      <div class="jio-info" id="jioOtpHint">OTP sent to +91 xxxxxxxxxx</div>
+      <label class="jio-step-label">6-Digit OTP</label>
+      <input class="jio-input" id="jioOtp" type="tel" maxlength="6" inputmode="numeric"
+        placeholder="••••••" style="letter-spacing:8px;text-align:center;font-size:1.3rem;font-weight:800"
+        onkeydown="if(event.key==='Enter')verifyJioOtp()"/>
+      <div id="jioErr2" class="jio-error"></div>
+      <button class="jio-btn" id="jioVerifyBtn" onclick="verifyJioOtp()">✅ Verify & Sign In</button>
+      <button class="jio-btn-sec" onclick="backToJioStep1()">← Change Number</button>
+    </div>
+
+    <!-- STEP 3: Signed in -->
+    <div id="jioStep3" style="display:none;text-align:center">
+      <div style="font-size:2.5rem;margin-bottom:8px">✅</div>
+      <div style="font-size:1rem;font-weight:700;color:#22c55e;margin-bottom:4px">Signed In!</div>
+      <div style="font-size:.8rem;color:var(--text2);margin-bottom:16px" id="jioSignedInInfo">Loading channels…</div>
+      <button class="jio-btn" onclick="closeJioModal()">Done</button>
+      <button class="jio-btn-sec" style="margin-top:8px;color:#ef4444;border-color:rgba(239,68,68,.3)" onclick="jioSignOut()">🔓 Sign Out</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // ── CATEGORIES CONFIG PER REGION ──
@@ -1527,6 +1629,537 @@ function checkAuthSession() {
 const isAuthed = checkAuthSession();
 
 if (isAuthed) { switchRegion(currentRegion); }
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  JIOTV INTEGRATION
+//  Uses the same API endpoints recovered from JioTV 7.1.8 (see vistaar repo)
+// ══════════════════════════════════════════════════════════════════════════════
+
+const JIO = {
+  // API constants (from vistaar/app/src/main/java/com/vistaar/tv/Api.kt)
+  APP_KEY:    'NzNiMDhlYzQyNjJm',
+  APP_NAME:   'RJIL_JioTV',
+  USER_GROUP: 'tvYR7NSNn7rymo3F',
+  VER_CODE:   '424',
+  LOGIN_BASE: 'https://jiotvapi.media.jio.com/userservice/apis/',
+  LISTS_BASE: 'https://jiotvapi.cdn.jio.com/apis/',
+  PLAY_BASE:  'https://jiotvapi.media.jio.com/playback/apis/',
+  TOKEN_BASE: 'https://auth.media.jio.com/tokenservice/apis/',
+  UA:         'plaYtv/7.1.8 (Linux;Android 13) ExoPlayerLib/1.3.1',
+
+  // Session (persisted in localStorage)
+  get sso()          { return localStorage.getItem('jio_sso') || '' },
+  get auth()         { return localStorage.getItem('jio_auth') || '' },
+  get refresh()      { return localStorage.getItem('jio_refresh') || '' },
+  get lb()           { return localStorage.getItem('jio_lb') || '1' },
+  get uniqueId()     { return localStorage.getItem('jio_uid') || '' },
+  get subscriberId() { return localStorage.getItem('jio_sub') || '' },
+  get deviceId()     { return localStorage.getItem('jio_dev') || (() => { const d = Math.random().toString(36).slice(2,18); localStorage.setItem('jio_dev',d); return d; })() },
+  get loggedIn()     { return !!this.sso },
+
+  save(sso, auth, refresh, lb, uid, sub) {
+    localStorage.setItem('jio_sso', sso);
+    localStorage.setItem('jio_auth', auth);
+    localStorage.setItem('jio_refresh', refresh);
+    localStorage.setItem('jio_lb', lb || '1');
+    localStorage.setItem('jio_uid', uid);
+    localStorage.setItem('jio_sub', sub);
+  },
+  clear() {
+    ['jio_sso','jio_auth','jio_refresh','jio_lb','jio_uid','jio_sub'].forEach(k => localStorage.removeItem(k));
+    jioChannels = [];
+  },
+
+  loginHeaders() {
+    return {
+      'Content-Type': 'application/json',
+      'appkey': this.APP_KEY, 'appName': this.APP_NAME,
+      'devicetype': 'phone', 'os': 'android',
+      'deviceId': this.deviceId, 'versionCode': this.VER_CODE,
+      'x-platform': 'androidmobile', 'osVersion': '13',
+      'User-Agent': this.UA,
+    };
+  },
+  authHeaders(channelId = '') {
+    return {
+      'appkey': this.APP_KEY, 'devicetype': 'phone', 'os': 'android',
+      'deviceId': this.deviceId, 'versionCode': this.VER_CODE,
+      'isott': 'false', 'dm': 'Phone', 'x-platform': 'android_mobile',
+      'uniqueId': this.uniqueId, 'usergroup': this.USER_GROUP,
+      'languageId': '6', 'userId': this.subscriberId,
+      'sid': crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).slice(2),
+      'crmid': this.subscriberId, 'channel_id': channelId || '',
+      'langid': '', 'camid': '', 'accesstoken': this.auth,
+      'ssotoken': this.sso, 'subscriberId': this.subscriberId,
+      'lbcookie': this.lb, 'User-Agent': this.UA,
+    };
+  },
+
+  async post(url, body, headers) {
+    const r = await fetch(url, {
+      method: 'POST', body: JSON.stringify(body), headers: { ...headers }
+    });
+    const t = await r.text();
+    return { code: r.status, data: JSON.parse(t) };
+  },
+
+  async get(url, headers) {
+    const r = await fetch(url, { headers: { ...headers } });
+    const t = await r.text();
+    return { code: r.status, data: JSON.parse(t) };
+  },
+
+  // ── LOGIN FLOW ──
+  async sendOtp(phone) {
+    const { code, data } = await this.post(
+      this.LOGIN_BASE + 'v1.3/validateMobile/sendOTP',
+      { number: '91' + phone },
+      this.loginHeaders()
+    );
+    if (code !== 200 && code !== 204) throw new Error(data?.message || `HTTP ${code}`);
+    return data;
+  },
+
+  async verifyOtp(phone, otp) {
+    const { code, data } = await this.post(
+      this.LOGIN_BASE + 'v1.3/validateMobile/verifyOTP',
+      { number: '91' + phone, otp },
+      this.loginHeaders()
+    );
+    if (code !== 200) throw new Error(data?.message || `HTTP ${code}`);
+    // Extract session tokens
+    const sess = data.sessionAttributes?.user || data;
+    const authToken  = sess.authToken   || data.authToken   || '';
+    const ssoToken   = data.ssoToken    || sess.ssoToken    || '';
+    const refreshTok = data.refreshToken|| sess.refreshToken|| '';
+    const lb         = data.lbCookie    || sess.lbCookie    || '1';
+    const uid        = data.uniqueId    || sess.uniqueId    || '';
+    const sub        = data.subscriberId|| sess.subscriberId|| '';
+    if (!authToken) throw new Error('No auth token in response');
+    this.save(ssoToken, authToken, refreshTok, lb, uid, sub);
+    return data;
+  },
+
+  async refreshAuth() {
+    if (!this.refresh) return false;
+    try {
+      const { code, data } = await this.post(
+        this.TOKEN_BASE + 'v2/refreshtoken',
+        { appName: this.APP_NAME, deviceId: this.deviceId, refreshToken: this.refresh },
+        { 'Content-Type': 'application/json', 'accesstoken': this.auth,
+          'devicetype': 'phone', 'versionCode': this.VER_CODE, 'os': 'android',
+          'uniqueId': this.uniqueId }
+      );
+      if (code < 200 || code > 299) return false;
+      const auth = (data.data || data).authToken;
+      if (!auth) return false;
+      localStorage.setItem('jio_auth', auth);
+      return true;
+    } catch { return false; }
+  },
+
+  // ── CHANNEL LIST ──
+  async fetchChannels() {
+    const h = this.authHeaders();
+    let { code, data } = await this.get(this.LISTS_BASE + 'v1.3/getallchannels?langId=6', h);
+    if (code === 419) { await this.refreshAuth(); ({ code, data } = await this.get(this.LISTS_BASE + 'v1.3/getallchannels?langId=6', h)); }
+    if (code !== 200) throw new Error(`Channel list HTTP ${code}`);
+    return (data.result || []).map(x => ({
+      jioId: String(x.channel_id),
+      name: String(x.channel_name),
+      order: x.channel_order == null ? 1e9 : x.channel_order,
+      lang: x.channelLanguageId | 0,
+      hd: !!x.isHD,
+      logo: x.logoUrl ? 'https://jiotvimages.cdn.jio.com/dare_images/images/' + x.logoUrl : '',
+      cat: x.channelCategoryId | 0,
+      premium: !!x.is_premium,
+    })).sort((a, b) => a.order - b.order);
+  },
+
+  // ── STREAM URL ──
+  async getStreamUrl(jioId) {
+    const body = new URLSearchParams({
+      stream_type: 'Seek', channel_id: jioId,
+      programId: '0', showtime: '000000', srno: '20', begin: '', end: ''
+    }).toString();
+    const h = this.authHeaders(jioId);
+    h['Content-Type'] = 'application/x-www-form-urlencoded';
+    const stale = this.auth;
+    let r = await fetch(this.PLAY_BASE + 'v1.1/geturl?langId=6', { method: 'POST', headers: h, body });
+    if (r.status === 419) { await this.refreshAuth(); r = await fetch(this.PLAY_BASE + 'v1.1/geturl?langId=6', { method: 'POST', headers: h, body }); }
+    if (!r.ok) throw new Error(`Playback HTTP ${r.status}`);
+    const j = await r.json();
+    const url = j.result || j.mpd?.result || '';
+    if (!url) throw new Error(`No stream URL: ${j.message || j.code}`);
+    return { url, dash: url.split('?')[0].endsWith('.mpd'), license: j.mpd?.key || '' };
+  },
+};
+
+// ── JIOTV STATE ──
+let jioChannels = [];   // raw channel list from API
+let jioUiChannels = []; // mapped to tv-guide channel format
+const JIO_GENRE = {5:'Entertainment',6:'Movies',12:'News',13:'Music',7:'Kids',8:'Sports',
+  15:'Devotional',17:'Education',10:'Knowledge',9:'Lifestyle',16:'Business',18:'Shopping'};
+const JIO_GENRE_CAT = {5:'entertainment',6:'movies',12:'news',13:'music',7:'kids',8:'sports',
+  15:'devotional',17:'education',10:'general',9:'lifestyle',16:'business',18:'general'};
+const JIO_LANG = {1:'Hindi',2:'Marathi',3:'Punjabi',4:'Urdu',5:'Bengali',6:'English',
+  7:'Malayalam',8:'Tamil',9:'Gujarati',10:'Odia',11:'Telugu',12:'Bhojpuri',13:'Kannada',14:'Assamese',15:'Nepali',16:'French'};
+const JIO_ID_BASE = 90000;
+
+const JIO_CATS = [
+  {id:'all',          label:'All JioTV',      icon:'📡'},
+  {id:'news',         label:'News',           icon:'📰'},
+  {id:'entertainment',label:'Entertainment',  icon:'🎬'},
+  {id:'movies',       label:'Movies',         icon:'🎥'},
+  {id:'sports',       label:'Sports',         icon:'⚽'},
+  {id:'music',        label:'Music',          icon:'🎵'},
+  {id:'kids',         label:'Kids',           icon:'🧸'},
+  {id:'devotional',   label:'Devotional',     icon:'🙏'},
+  {id:'lifestyle',    label:'Lifestyle',      icon:'🌿'},
+  {id:'education',    label:'Education',      icon:'📚'},
+  {id:'business',     label:'Business',       icon:'💼'},
+  {id:'general',      label:'General',        icon:'📺'},
+  {id:'imported',     label:'My Channels',    icon:'📥'},
+];
+
+function mapJioChannels(raw) {
+  return raw.map((ch, idx) => ({
+    id: JIO_ID_BASE + idx,
+    jioId: ch.jioId,
+    name: ch.name + (ch.premium ? ' 👑' : '') + (ch.hd ? ' HD' : ''),
+    logo: ch.logo,
+    cat: JIO_GENRE_CAT[ch.cat] || 'general',
+    lang: JIO_LANG[ch.lang] || 'Hindi',
+    group: JIO_GENRE[ch.cat] || 'General',
+    url: '',              // empty → needs on-demand stream fetch
+    ua: JIO.UA,
+    emoji: '📡',
+    region: 'jio',
+    jio: true,
+    premium: ch.premium,
+    hd: ch.hd,
+    jioOrder: ch.order,
+  }));
+}
+
+async function loadJioChannels(force = false) {
+  if (!JIO.loggedIn) return;
+  if (jioUiChannels.length && !force) return;
+
+  const cached = localStorage.getItem('jio_channels');
+  const cachedAt = Number(localStorage.getItem('jio_channels_at') || 0);
+  if (!force && cached && Date.now() - cachedAt < 6 * 3600_000) {
+    jioChannels = JSON.parse(cached);
+    jioUiChannels = mapJioChannels(jioChannels);
+    updateJioBadge();
+    if (currentRegion === 'jio') { renderSidebar(); renderGrid(getFiltered()); }
+    return;
+  }
+
+  document.getElementById('jioLoadingBar').style.display = 'block';
+  try {
+    jioChannels = await JIO.fetchChannels();
+    localStorage.setItem('jio_channels', JSON.stringify(jioChannels));
+    localStorage.setItem('jio_channels_at', String(Date.now()));
+    jioUiChannels = mapJioChannels(jioChannels);
+    updateJioBadge();
+    if (currentRegion === 'jio') { renderSidebar(); renderGrid(getFiltered()); }
+    showToast(`📡 JioTV: ${jioUiChannels.length} channels loaded`);
+  } catch(e) {
+    showToast('❌ JioTV channel list failed: ' + e.message);
+    console.error('JioTV fetch failed:', e);
+  } finally {
+    document.getElementById('jioLoadingBar').style.display = 'none';
+  }
+}
+
+function updateJioBadge() {
+  const badge = document.getElementById('badgeJio');
+  if (badge) badge.textContent = jioUiChannels.length ? jioUiChannels.length.toLocaleString() : '—';
+}
+
+// ── OVERRIDE getRegionBaseChannels / getRegionCats for jio region ──
+const _origGetBase = getRegionBaseChannels;
+getRegionBaseChannels = function() {
+  if (currentRegion === 'jio') return jioUiChannels;
+  return _origGetBase();
+};
+
+const _origGetCats = getRegionCats;
+getRegionCats = function() {
+  if (currentRegion === 'jio') return JIO_CATS;
+  return _origGetCats();
+};
+
+// Override switchRegion to handle jio tab
+const _origSwitchRegion = switchRegion;
+switchRegion = function(reg) {
+  document.getElementById('tabJio').classList.toggle('active', reg === 'jio');
+  const jioBtn = document.getElementById('jioLoginBtn');
+  if (reg === 'jio') {
+    jioBtn.style.display = 'flex';
+    if (JIO.loggedIn) {
+      jioBtn.textContent = '✅ Jio Connected';
+      jioBtn.classList.add('signed-in');
+    } else {
+      jioBtn.textContent = '🔑 Sign in to Jio';
+      jioBtn.classList.remove('signed-in');
+    }
+  } else {
+    jioBtn.style.display = 'none';
+  }
+  if (reg === 'jio') {
+    // Handle jio region manually
+    currentRegion = 'jio';
+    localStorage.setItem('currentRegion', 'jio');
+    document.getElementById('tabIndia').classList.remove('active');
+    document.getElementById('tabGlobal').classList.remove('active');
+    document.getElementById('regionSummary').textContent =
+      JIO.loggedIn
+        ? `Active: JioTV Premium (${jioUiChannels.length} channels)`
+        : 'Sign in to your Jio account to load premium channels';
+    currentCat = 'all';
+    currentPage = 1;
+    renderSidebar();
+    if (!JIO.loggedIn) {
+      document.getElementById('grid').innerHTML = `
+        <div class="empty" style="grid-column:1/-1;padding:60px 20px">
+          <div style="font-size:3rem;margin-bottom:12px">📡</div>
+          <div style="font-size:1.1rem;font-weight:700;color:#fff;margin-bottom:8px">JioTV Premium Channels</div>
+          <div style="font-size:.85rem;color:var(--text2);max-width:360px;line-height:1.5;margin-bottom:20px">
+            Sign in with your Jio mobile number to unlock 700+ live premium Indian channels
+            — entertainment, sports, movies, news and more.
+          </div>
+          <button onclick="openJioModal()" style="background:linear-gradient(135deg,#4f8ef7,#2563eb);border:none;color:#fff;padding:12px 28px;border-radius:12px;font-size:.95rem;font-weight:800;cursor:pointer;box-shadow:0 4px 16px rgba(79,142,247,.4)">
+            🔑 Sign in to Jio
+          </button>
+        </div>`;
+      document.getElementById('chCount').textContent = '';
+      document.getElementById('pagerTop').innerHTML = '';
+      document.getElementById('pagerBot').innerHTML = '';
+    } else {
+      loadJioChannels().then(() => renderGrid(getFiltered()));
+    }
+    showToast('📡 JioTV Premium');
+    return;
+  }
+  _origSwitchRegion(reg);
+};
+
+// ── ON-DEMAND JIO STREAM FETCHING ──
+// Override onCardClick for jio channels
+const _origOnCardClick = onCardClick;
+onCardClick = function(id) {
+  if (currentRegion !== 'jio') { _origOnCardClick(id); return; }
+  const ch = jioUiChannels.find(c => c.id === id);
+  if (!ch) return;
+  if (!JIO.loggedIn) { openJioModal(); return; }
+  playJioChannel(ch);
+};
+
+async function playJioChannel(ch) {
+  const inTheater = isEchoMode || window.innerWidth <= 1024;
+  // Show loading state first
+  currentChannel = ch;
+  if (inTheater) {
+    const theater = document.getElementById('echoTheater');
+    theater.classList.add('active');
+    isTheaterActive = true;
+    document.getElementById('echoTitle').textContent = ch.name;
+    document.getElementById('echoMeta').textContent = `${ch.lang} · ${ch.group} · JioTV`;
+    const elogo = document.getElementById('echoLogo');
+    if (ch.logo) { elogo.src = ch.logo; elogo.style.display = 'block'; } else elogo.style.display = 'none';
+    showTheaterOverlay(); resetOverlayTimer();
+    document.getElementById('echoVid').src = '';
+    if (echoHls) { echoHls.destroy(); echoHls = null; }
+  } else {
+    document.getElementById('playerPanel').classList.remove('hidden');
+    document.getElementById('pName').textContent = ch.name;
+    document.getElementById('pMeta').textContent = `${ch.lang} · ${ch.group} · JioTV`;
+    const logo = document.getElementById('pLogo');
+    if (ch.logo) { logo.src = ch.logo; logo.style.display = 'block'; } else logo.style.display = 'none';
+    document.getElementById('uaWarn').classList.add('hidden');
+    document.getElementById('pUrl').textContent = 'Fetching stream URL…';
+    const ov = document.getElementById('vidOv');
+    ov.style.display = 'flex';
+    ov.innerHTML = '<div class="spinner"></div><span>Connecting to JioTV…</span>';
+    if (hls) { hls.destroy(); hls = null; }
+    document.getElementById('vid').src = '';
+  }
+  renderGrid(getFiltered());
+
+  try {
+    showToast('📡 Fetching JioTV stream…');
+    const { url, dash, license } = await JIO.getStreamUrl(ch.jioId);
+    ch.url = url; // cache for retry/VLC
+    if (inTheater) {
+      document.getElementById('pUrl') && (document.getElementById('pUrl').textContent = url);
+      _loadHlsInTheater(ch, url);
+    } else {
+      document.getElementById('pUrl').textContent = url;
+      _loadHlsDesktop(ch, url);
+    }
+  } catch(e) {
+    const msg = `❌ JioTV stream failed: ${e.message}`;
+    showToast(msg);
+    console.error('JioTV geturl failed:', e);
+    if (!inTheater) {
+      const ov = document.getElementById('vidOv');
+      ov.style.display = 'flex';
+      ov.innerHTML = buildHlsErrorUI(ch.id, 'JioTV Stream Error', e.message, '');
+    }
+    setDot(ch.id, 'error');
+  }
+}
+
+function _loadHlsDesktop(ch, url) {
+  const vid = document.getElementById('vid');
+  const ov = document.getElementById('vidOv');
+  ov.style.display = 'flex';
+  ov.innerHTML = '<div class="spinner"></div><span>Buffering JioTV…</span>';
+  if (hls) { hls.destroy(); hls = null; }
+  if (Hls.isSupported()) {
+    hls = new Hls({ ...HLS_CONFIG, xhrSetup: xhr => { xhr.setRequestHeader('User-Agent', JIO.UA); } });
+    hls.loadSource(url);
+    hls.attachMedia(vid);
+    hls.on(Hls.Events.MANIFEST_PARSED, () => { ov.style.display = 'none'; vid.play().catch(()=>{}); setDot(ch.id,'live'); requestWake(); });
+    hls.on(Hls.Events.ERROR, (e, d) => {
+      if (d.fatal) { ov.style.display='flex'; ov.innerHTML=buildHlsErrorUI(ch.id,'JioTV Error',d.details||'Stream failed',''); setDot(ch.id,'error'); }
+    });
+  } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+    vid.src = url; ov.style.display = 'none'; vid.play().catch(()=>{});
+  }
+}
+
+function _loadHlsInTheater(ch, url) {
+  const vid = document.getElementById('echoVid');
+  if (echoHls) { echoHls.destroy(); echoHls = null; }
+  if (Hls.isSupported()) {
+    echoHls = new Hls({ ...HLS_CONFIG, xhrSetup: xhr => { xhr.setRequestHeader('User-Agent', JIO.UA); } });
+    echoHls.loadSource(url);
+    echoHls.attachMedia(vid);
+    echoHls.on(Hls.Events.MANIFEST_PARSED, () => {
+      vid.play().catch(() => { vid.muted=true; vid.play().then(()=>{ document.getElementById('echoUnmuteBtn').style.display='block'; }).catch(()=>{}); });
+      setDot(ch.id,'live'); requestWake();
+    });
+    echoHls.on(Hls.Events.ERROR, (e, d) => { if (d.fatal) { showToast('⚠️ JioTV stream error: ' + d.details); setDot(ch.id,'error'); } });
+  } else if (vid.canPlayType('application/vnd.apple.mpegurl')) {
+    vid.src = url; vid.play().catch(()=>{});
+  }
+}
+
+// Override retry() for jio channels
+const _origRetry = retry;
+retry = function() {
+  if (currentChannel && currentChannel.jio) { playJioChannel(currentChannel); return; }
+  _origRetry();
+};
+
+// ── JIO LOGIN MODAL ──
+function openJioModal() {
+  const modal = document.getElementById('jioModalBg');
+  modal.classList.remove('hidden');
+  if (JIO.loggedIn) {
+    showJioStep(3);
+    const info = document.getElementById('jioSignedInInfo');
+    info.textContent = `${jioUiChannels.length} channels loaded · Sub ID: ${JIO.subscriberId.slice(0,6)}…`;
+  } else {
+    showJioStep(1);
+  }
+}
+
+function closeJioModal() { document.getElementById('jioModalBg').classList.add('hidden'); }
+function closeJioModalOut(e) { if (e.target === document.getElementById('jioModalBg')) closeJioModal(); }
+
+function showJioStep(n) {
+  document.getElementById('jioStep1').style.display = n===1 ? 'block' : 'none';
+  document.getElementById('jioStep2').style.display = n===2 ? 'block' : 'none';
+  document.getElementById('jioStep3').style.display = n===3 ? 'block' : 'none';
+}
+
+function backToJioStep1() { showJioStep(1); }
+
+async function sendJioOtp() {
+  const phone = document.getElementById('jioPhone').value.trim();
+  if (!/^\d{10}$/.test(phone)) {
+    const e = document.getElementById('jioErr1');
+    e.textContent = '⚠️ Enter a valid 10-digit mobile number.'; e.style.display = 'block'; return;
+  }
+  document.getElementById('jioErr1').style.display = 'none';
+  const btn = document.getElementById('jioSendOtpBtn');
+  btn.disabled = true; btn.textContent = '⏳ Sending…';
+  document.getElementById('jioLoadingBar').style.display = 'block';
+  try {
+    await JIO.sendOtp(phone);
+    document.getElementById('jioOtpHint').textContent = `OTP sent to +91 ${phone.slice(0,5)}…${phone.slice(-2)}`;
+    showJioStep(2);
+    setTimeout(() => document.getElementById('jioOtp').focus(), 100);
+    showToast('📲 OTP sent!');
+  } catch(e) {
+    const err = document.getElementById('jioErr1');
+    err.textContent = '❌ ' + e.message; err.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = '📲 Send OTP';
+    document.getElementById('jioLoadingBar').style.display = 'none';
+  }
+}
+
+async function verifyJioOtp() {
+  const phone = document.getElementById('jioPhone').value.trim();
+  const otp   = document.getElementById('jioOtp').value.trim();
+  if (!/^\d{6}$/.test(otp)) {
+    const e = document.getElementById('jioErr2');
+    e.textContent = '⚠️ Enter the 6-digit OTP from SMS.'; e.style.display = 'block'; return;
+  }
+  document.getElementById('jioErr2').style.display = 'none';
+  const btn = document.getElementById('jioVerifyBtn');
+  btn.disabled = true; btn.textContent = '⏳ Verifying…';
+  document.getElementById('jioLoadingBar').style.display = 'block';
+  try {
+    await JIO.verifyOtp(phone, otp);
+    showJioStep(3);
+    showToast('✅ Jio sign-in successful!');
+    // Update login button in region bar
+    const jioBtn = document.getElementById('jioLoginBtn');
+    jioBtn.textContent = '✅ Jio Connected';
+    jioBtn.classList.add('signed-in');
+    // Load channels
+    await loadJioChannels(true);
+    document.getElementById('jioSignedInInfo').textContent =
+      `${jioUiChannels.length} channels loaded · Sub: ${JIO.subscriberId.slice(0,6)}…`;
+    if (currentRegion === 'jio') switchRegion('jio');
+  } catch(e) {
+    const err = document.getElementById('jioErr2');
+    err.textContent = '❌ ' + (e.message || 'OTP verification failed'); err.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = '✅ Verify & Sign In';
+    document.getElementById('jioLoadingBar').style.display = 'none';
+  }
+}
+
+function jioSignOut() {
+  JIO.clear();
+  jioUiChannels = [];
+  localStorage.removeItem('jio_channels');
+  localStorage.removeItem('jio_channels_at');
+  updateJioBadge();
+  closeJioModal();
+  const jioBtn = document.getElementById('jioLoginBtn');
+  jioBtn.textContent = '🔑 Sign in to Jio';
+  jioBtn.classList.remove('signed-in');
+  if (currentRegion === 'jio') switchRegion('jio');
+  showToast('🔓 Signed out of JioTV');
+}
+
+// ── INIT JIO on page load ──
+(function initJio() {
+  updateJioBadge();
+  if (JIO.loggedIn) {
+    const jioBtn = document.getElementById('jioLoginBtn');
+    // Load cached channels silently
+    loadJioChannels();
+  }
+})();
 
 </script>
 </body>

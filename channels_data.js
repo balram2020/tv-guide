@@ -1,4 +1,3 @@
-// Generated Channels Data
 const INDIA_CHANNELS = [
   {
     "id": 60,
@@ -9119,8 +9118,69 @@ const INDIA_CHANNELS = [
     "ua": "",
     "emoji": "🌿",
     "region": "in"
+  },
+  {
+    "id": 6009,
+    "name": "Doraemon",
+    "logo": "https://upload.wikimedia.org/wikipedia/commons/0/01/Doraemon_Merch_EN_Logo.svg",
+    "cat": "kids",
+    "lang": "",
+    "group": "Animation",
+    "url": "https://live20.bozztv.com/giatvplayout7/giatv-209902/tracks-v1a1/mono.ts.m3u8",
+    "ua": "",
+    "emoji": "🎨",
+    "region": "in"
+  },
+  {
+    "id": 6010,
+    "name": "Hyder TV",
+    "logo": "https://i.imgur.com/reHjjRZ.png",
+    "cat": "general",
+    "lang": "",
+    "group": "Culture",
+    "url": "https://cdn.live247stream.com/hyder/tv/playlist.m3u8",
+    "ua": "",
+    "emoji": "🎭",
+    "region": "in"
+  },
+  {
+    "id": 6011,
+    "name": "Peace TV Bangla",
+    "logo": "https://i.imgur.com/1ztVXUi.png",
+    "cat": "religious",
+    "lang": "",
+    "group": "Religious",
+    "url": "http://103.135.253.32:8080/Pace-TV-Bangla/index.m3u8",
+    "ua": "",
+    "emoji": "🕉️",
+    "region": "in"
+  },
+  {
+    "id": 6012,
+    "name": "Shin-chan",
+    "logo": "https://image.tmdb.org/t/p/original/fIYWvHIeqc1A9D4PyayFkgjRxCh.png",
+    "cat": "kids",
+    "lang": "",
+    "group": "Animation",
+    "url": "https://live20.bozztv.com/giatvplayout7/giatv-210780/index.m3u8",
+    "ua": "",
+    "emoji": "🎨",
+    "region": "in"
+  },
+  {
+    "id": 6013,
+    "name": "Sooriyan TV",
+    "logo": "https://i.ibb.co/LSyydKj/Sooriyan-TV-Tamil.jpg",
+    "cat": "entertainment",
+    "lang": "",
+    "group": "Entertainment",
+    "url": "https://live20.bozztv.com/giatv/giatv-Infinittyott/Infinittyott/playlist.m3u8",
+    "ua": "",
+    "emoji": "🎭",
+    "region": "in"
   }
 ];
+
 
 const GLOBAL_CHANNELS = [
   {
