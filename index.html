@@ -766,6 +766,19 @@ body.echo-mode .player-panel{display:none !important}
       <button class="jio-btn-sec" onclick="backToJioStep1()">← Change Number</button>
     </div>
 
+    <!-- STEP LIMIT: Device Limit Exceeded -->
+    <div id="jioStepLimit" style="display:none;text-align:center">
+      <div style="font-size:2.2rem;margin-bottom:8px">📱⚠️</div>
+      <div style="font-size:1.05rem;font-weight:700;color:#ff9a00;margin-bottom:6px">Device Limit Reached</div>
+      <div style="font-size:.82rem;color:var(--text2);margin-bottom:14px;line-height:1.4">
+        Your Jio account has reached the maximum active devices allowed by Jio.
+        Click below to log out older devices and activate this screen:
+      </div>
+      <div id="jioErrLimit" class="jio-error" style="margin-bottom:10px"></div>
+      <button class="jio-btn" id="jioExpireBtn" onclick="jioLogOutOthers()">🔓 Log Out Other Devices & Sign In</button>
+      <button class="jio-btn-sec" onclick="backToJioStep1()">← Change Number</button>
+    </div>
+
     <!-- STEP 3: Signed in -->
     <div id="jioStep3" style="display:none;text-align:center">
       <div style="font-size:2.5rem;margin-bottom:8px">✅</div>
@@ -1786,6 +1799,20 @@ const JIO = {
 
     const d = data.data || data;
     const user = d.sessionAttributes && d.sessionAttributes.user;
+
+    // Check if Jio device limit is reached
+    const tempToken = d.tempToken || (d.device_limit_exceeded && d.device_limit_exceeded.tempToken);
+    if (tempToken || d.device_limit_exceeded) {
+      this._pending = {
+        temp: tempToken || d.tempToken || '',
+        lb: d.lbCookie || '1',
+        unique: (user && (user.unique || user.uniqueId)) || '',
+        sub: (user && user.subscriberId) || '',
+        uid: (user && user.uid) || ''
+      };
+      return { deviceLimit: true };
+    }
+
     const authToken  = d.authToken || '';
     const ssoToken   = d.ssoToken  || '';
     const refreshTok = d.refreshToken || '';
@@ -1798,7 +1825,30 @@ const JIO = {
       throw new Error('Sign-in response missing token: ' + (raw || '').slice(0, 120));
     }
     this.save(ssoToken, authToken, refreshTok, lb, uid, sub);
-    return data;
+    return { success: true };
+  },
+
+  async expireAllUsers() {
+    const p = this._pending;
+    if (!p || !p.temp) throw new Error('Session expired. Please request a new OTP.');
+    const url = this.TOKEN_BASE + 'v2/expireallusers';
+    const body = { appName: this.APP_NAME, deviceId: this.deviceId };
+    const headers = {
+      'Content-Type': 'application/json',
+      'x-platform': 'androidmobile',
+      'temptoken': p.temp
+    };
+    const { code, data, raw } = await this.post(url, body, headers);
+    if (code < 200 || code > 299) {
+      throw new Error((data && (data.message || data.errorMessage)) || `Could not log out other devices (${code})`);
+    }
+    const d = data.data || data;
+    if (!d.ssoToken || !d.authToken) {
+      throw new Error('Other devices were logged out. Please request a new OTP to finish sign-in.');
+    }
+    this.save(d.ssoToken, d.authToken, d.refreshToken || '', p.lb, p.unique, p.sub);
+    this._pending = null;
+    return d;
   },
 
   async refreshAuth() {
@@ -2133,9 +2183,10 @@ function closeJioModal() { document.getElementById('jioModalBg').classList.add('
 function closeJioModalOut(e) { if (e.target === document.getElementById('jioModalBg')) closeJioModal(); }
 
 function showJioStep(n) {
-  document.getElementById('jioStep1').style.display = n===1 ? 'block' : 'none';
-  document.getElementById('jioStep2').style.display = n===2 ? 'block' : 'none';
-  document.getElementById('jioStep3').style.display = n===3 ? 'block' : 'none';
+  document.getElementById('jioStep1').style.display = n === 1 ? 'block' : 'none';
+  document.getElementById('jioStep2').style.display = n === 2 ? 'block' : 'none';
+  document.getElementById('jioStepLimit').style.display = n === 'limit' ? 'block' : 'none';
+  document.getElementById('jioStep3').style.display = n === 3 ? 'block' : 'none';
 }
 
 function backToJioStep1() { showJioStep(1); }
@@ -2177,18 +2228,13 @@ async function verifyJioOtp() {
   btn.disabled = true; btn.textContent = '⏳ Verifying…';
   document.getElementById('jioLoadingBar').style.display = 'block';
   try {
-    await JIO.verifyOtp(phone, otp);
-    showJioStep(3);
-    showToast('✅ Jio sign-in successful!');
-    // Update login button in region bar
-    const jioBtn = document.getElementById('jioLoginBtn');
-    jioBtn.textContent = '✅ Jio Connected';
-    jioBtn.classList.add('signed-in');
-    // Load channels
-    await loadJioChannels(true);
-    document.getElementById('jioSignedInInfo').textContent =
-      `${jioUiChannels.length} channels loaded · Sub: ${JIO.subscriberId.slice(0,6)}…`;
-    if (currentRegion === 'jio') switchRegion('jio');
+    const res = await JIO.verifyOtp(phone, otp);
+    if (res && res.deviceLimit) {
+      showJioStep('limit');
+      showToast('⚠️ Jio device limit reached');
+      return;
+    }
+    await onJioLoginSuccess();
   } catch(e) {
     const err = document.getElementById('jioErr2');
     err.textContent = '❌ ' + (e.message || 'OTP verification failed'); err.style.display = 'block';
@@ -2196,6 +2242,35 @@ async function verifyJioOtp() {
     btn.disabled = false; btn.textContent = '✅ Verify & Sign In';
     document.getElementById('jioLoadingBar').style.display = 'none';
   }
+}
+
+async function jioLogOutOthers() {
+  const btn = document.getElementById('jioExpireBtn');
+  btn.disabled = true; btn.textContent = '⏳ Logging out other devices…';
+  document.getElementById('jioLoadingBar').style.display = 'block';
+  const errBox = document.getElementById('jioErrLimit');
+  errBox.style.display = 'none';
+  try {
+    await JIO.expireAllUsers();
+    await onJioLoginSuccess();
+  } catch(e) {
+    errBox.textContent = '❌ ' + e.message; errBox.style.display = 'block';
+  } finally {
+    btn.disabled = false; btn.textContent = '🔓 Log Out Other Devices & Sign In';
+    document.getElementById('jioLoadingBar').style.display = 'none';
+  }
+}
+
+async function onJioLoginSuccess() {
+  showJioStep(3);
+  showToast('✅ Jio sign-in successful!');
+  const jioBtn = document.getElementById('jioLoginBtn');
+  jioBtn.textContent = '✅ Jio Connected';
+  jioBtn.classList.add('signed-in');
+  await loadJioChannels(true);
+  document.getElementById('jioSignedInInfo').textContent =
+    `${jioUiChannels.length} channels loaded · Sub: ${JIO.subscriberId.slice(0,6)}…`;
+  if (currentRegion === 'jio') switchRegion('jio');
 }
 
 function jioSignOut() {
