@@ -1109,11 +1109,21 @@ function playCh(id) {
       if (d.fatal) {
         if (d.details === Hls.ErrorDetails.KEY_LOAD_ERROR || d.details === 'keyLoadError') {
           console.warn('Key load error encountered in playCh:', d);
+          const isDrm = (d.context && d.context.text === 'DRM_PROTECTED_SAMPLE_AES') ||
+                        (d.response && d.response.text === 'DRM_PROTECTED_SAMPLE_AES');
+          if (isDrm) {
+            const msg = 'This channel is protected with DRM (SAMPLE-AES/Widevine) and requires the official JioTV app.';
+            ov.style.display = "flex";
+            ov.innerHTML = buildHlsErrorUI(id, "🔒 DRM Protected Stream", msg, ch.url);
+            setDot(id, "error");
+            return;
+          }
           if (ch.jio || ch.jioId) {
             const ok = await JIO.refreshAuth().catch(() => false);
             if (ok) {
               try {
                 const res = await JIO.getStreamUrl(ch.jioId);
+                if (res.srno) ch.srno = res.srno;
                 hls.loadSource(res.url);
                 hls.startLoad();
                 return;
@@ -1221,11 +1231,19 @@ function playChInTheater(id) {
       if (d.fatal) {
         if (d.details === Hls.ErrorDetails.KEY_LOAD_ERROR || d.details === 'keyLoadError') {
           console.warn('Key load error encountered in theater:', d);
+          const isDrm = (d.context && d.context.text === 'DRM_PROTECTED_SAMPLE_AES') ||
+                        (d.response && d.response.text === 'DRM_PROTECTED_SAMPLE_AES');
+          if (isDrm) {
+            showToast(`🔒 DRM Protected Stream (SAMPLE-AES/Widevine)`);
+            setDot(id, "error");
+            return;
+          }
           if (ch.jio || ch.jioId) {
             const ok = await JIO.refreshAuth().catch(() => false);
             if (ok) {
               try {
                 const res = await JIO.getStreamUrl(ch.jioId);
+                if (res.srno) ch.srno = res.srno;
                 echoHls.loadSource(res.url);
                 echoHls.startLoad();
                 return;
@@ -1799,8 +1817,9 @@ const JIO = {
       'userId': this.userId || this.subscriberId,
       'os': 'android', 'devicetype': 'phone', 'appkey': this.APP_KEY,
       'appName': this.APP_NAME, 'versioncode': this.VER_CODE, 'versionCode': this.VER_CODE,
-      'osVersion': '11', 'x-platform': 'android', 'usergroup': this.USER_GROUP,
+      'osVersion': '11', 'x-platform': 'android_mobile', 'usergroup': this.USER_GROUP,
       'lbcookie': this.lb || '1', 'channelid': String(channelId || '0'),
+      'channel_id': String(channelId || '0'),
       'srno': String(srno || 0), 'crmid': this.subscriberId, 'User-Agent': this.UA,
     };
   },
@@ -2051,7 +2070,7 @@ const JIO = {
     const j = await r.json();
     const url = j.bitrates?.auto || j.result || j.m3u8?.auto || j.mpd?.result || '';
     if (!url) throw new Error(`No stream URL: ${j.message || j.code}`);
-    return { url, dash: url.split('?')[0].endsWith('.mpd'), license: j.mpd?.key || '' };
+    return { url, dash: url.split('?')[0].endsWith('.mpd'), license: j.mpd?.key || '', srno: srnoVal };
   },
 };
 
@@ -2254,8 +2273,9 @@ async function playJioChannel(ch) {
 
   try {
     showToast('📡 Fetching JioTV stream…');
-    const { url, dash, license } = await JIO.getStreamUrl(ch.jioId);
+    const { url, dash, license, srno } = await JIO.getStreamUrl(ch.jioId);
     ch.url = url; // cache for retry/VLC
+    if (srno) ch.srno = srno;
     if (dash) {
       const msg = 'This channel is protected with DRM (MPEG-DASH/Widevine) and requires the official JioTV app.';
       showToast('🔒 ' + msg);
@@ -2290,12 +2310,30 @@ async function playJioChannel(ch) {
 function getJioHlsConfig(channel, streamUrl) {
   const tok = tokenOf(streamUrl);
   const chJioId = channel ? (channel.jioId || channel.id) : '0';
+  const chSrno = channel ? (channel.srno || '') : '';
   const BaseLoader = (Hls && Hls.DefaultConfig && Hls.DefaultConfig.loader) || class {};
 
   class JioKeyLoader extends BaseLoader {
     async load(context, config, callbacks) {
       const targetUrl = String(context.url || '');
-      const isKey = Boolean(context.keyInfo) ||
+      const keyInfo = context.keyInfo || (context.frag && context.frag.keyInfo);
+      const isSampleAes = (keyInfo && keyInfo.method === 'SAMPLE-AES') ||
+                          targetUrl.startsWith('skd://') ||
+                          targetUrl.includes('fairplay') ||
+                          targetUrl.includes('widevine');
+
+      if (isSampleAes) {
+        console.warn('JioKeyLoader: Stream uses DRM/SAMPLE-AES protection:', targetUrl);
+        callbacks.onError(
+          { code: 403, text: 'DRM_PROTECTED_SAMPLE_AES' },
+          context,
+          null,
+          {}
+        );
+        return;
+      }
+
+      const isKey = Boolean(keyInfo) ||
                     context.type === 'key' ||
                     (context.frag && context.frag.type === 'key') ||
                     targetUrl.indexOf('.pkey') >= 0 ||
@@ -2315,7 +2353,7 @@ function getJioHlsConfig(channel, streamUrl) {
       // Clean headers for browser fetch (browser rejects custom User-Agent in fetch())
       const buildCleanHeaders = () => {
         let channelIdToUse = String(chJioId || '0');
-        let srnoToUse = '230203144000';
+        let srnoToUse = chSrno || '230203144000';
         try {
           const u = new URL(keyUrlWithToken);
           const qCh = u.searchParams.get('channelid') || u.searchParams.get('channel_id') || u.searchParams.get('channelId');
@@ -2331,7 +2369,9 @@ function getJioHlsConfig(channel, streamUrl) {
         });
         clean['channelId'] = channelIdToUse;
         clean['channelid'] = channelIdToUse;
+        clean['channel_id'] = channelIdToUse;
         clean['srno'] = srnoToUse;
+        clean['x-platform'] = 'android_mobile';
         return clean;
       };
 
@@ -2354,14 +2394,16 @@ function getJioHlsConfig(channel, streamUrl) {
             for (let i = 0; i < 16; i++) u[i] = parseInt(txt.substr(i * 2, 2), 16);
             return u.buffer;
           }
-          // 2. Base64 string (22 to 26 characters)
-          if (/^[A-Za-z0-9+/=]{22,26}$/.test(txt)) {
-            const bin = atob(txt);
-            if (bin.length === 16) {
-              const u = new Uint8Array(16);
-              for (let i = 0; i < 16; i++) u[i] = bin.charCodeAt(i);
-              return u.buffer;
-            }
+          // 2. Base64 string (22 to 28 characters)
+          if (/^[A-Za-z0-9+/=]{22,28}$/.test(txt)) {
+            try {
+              const bin = atob(txt);
+              if (bin.length === 16) {
+                const u = new Uint8Array(16);
+                for (let i = 0; i < 16; i++) u[i] = bin.charCodeAt(i);
+                return u.buffer;
+              }
+            } catch(e) {}
           }
           // 3. JSON payload
           if (txt.startsWith('{') && txt.endsWith('}')) {
@@ -2374,13 +2416,15 @@ function getJioHlsConfig(channel, streamUrl) {
                 for (let i = 0; i < 16; i++) u[i] = parseInt(cleanVal.substr(i * 2, 2), 16);
                 return u.buffer;
               }
-              if (/^[A-Za-z0-9+/=]{22,26}$/.test(cleanVal)) {
-                const bin = atob(cleanVal);
-                if (bin.length === 16) {
-                  const u = new Uint8Array(16);
-                  for (let i = 0; i < 16; i++) u[i] = bin.charCodeAt(i);
-                  return u.buffer;
-                }
+              if (/^[A-Za-z0-9+/=]{22,28}$/.test(cleanVal)) {
+                try {
+                  const bin = atob(cleanVal);
+                  if (bin.length === 16) {
+                    const u = new Uint8Array(16);
+                    for (let i = 0; i < 16; i++) u[i] = bin.charCodeAt(i);
+                    return u.buffer;
+                  }
+                } catch(e) {}
               }
             }
           }
@@ -2505,11 +2549,22 @@ function _loadHlsDesktop(ch, url) {
       console.warn('JioTV Stream Error:', d.type, d.details, d);
       if (d.fatal) {
         if (d.details === Hls.ErrorDetails.KEY_LOAD_ERROR || d.details === 'keyLoadError') {
+          const isDrm = (d.context && d.context.text === 'DRM_PROTECTED_SAMPLE_AES') ||
+                        (d.response && d.response.text === 'DRM_PROTECTED_SAMPLE_AES');
+          if (isDrm) {
+            const msg = 'This channel is protected with DRM (SAMPLE-AES/Widevine) and requires the official JioTV app.';
+            showToast('🔒 ' + msg);
+            ov.style.display = 'flex';
+            ov.innerHTML = buildHlsErrorUI(ch.id, 'DRM Protected Stream', msg, '');
+            setDot(ch.id, 'error');
+            return;
+          }
           console.log('Key load error encountered, attempting automatic session refresh...');
           const ok = await JIO.refreshAuth().catch(() => false);
           if (ok) {
             try {
               const res = await JIO.getStreamUrl(ch.jioId);
+              if (res.srno) ch.srno = res.srno;
               hls.loadSource(res.url);
               hls.startLoad();
               return;
@@ -2549,11 +2604,20 @@ function _loadHlsInTheater(ch, url) {
       console.warn('JioTV Theater Stream Error:', d.type, d.details, d);
       if (d.fatal) {
         if (d.details === Hls.ErrorDetails.KEY_LOAD_ERROR || d.details === 'keyLoadError') {
+          const isDrm = (d.context && d.context.text === 'DRM_PROTECTED_SAMPLE_AES') ||
+                        (d.response && d.response.text === 'DRM_PROTECTED_SAMPLE_AES');
+          if (isDrm) {
+            const msg = 'This channel is protected with DRM (SAMPLE-AES/Widevine) and requires the official JioTV app.';
+            showToast('🔒 ' + msg);
+            setDot(ch.id, 'error');
+            return;
+          }
           console.log('Key load error encountered in theater, attempting automatic session refresh...');
           const ok = await JIO.refreshAuth().catch(() => false);
           if (ok) {
             try {
               const res = await JIO.getStreamUrl(ch.jioId);
+              if (res.srno) ch.srno = res.srno;
               echoHls.loadSource(res.url);
               echoHls.startLoad();
               return;

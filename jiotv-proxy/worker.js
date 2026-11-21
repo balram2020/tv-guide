@@ -87,7 +87,11 @@ export default {
       );
     }
 
-    const isJioTarget = targetHost.includes('jio') || targetHost.includes('jiotv');
+    const isJioTarget =
+      targetHost.includes('jio') ||
+      targetHost.includes('jiotv') ||
+      targetHost.includes('akamaized.net') ||
+      targetHost.includes('n18syndication');
     const hasJioAuth = Boolean(request.headers.get('ssotoken')) || Boolean(request.headers.get('accesstoken'));
     const isKey =
       targetUrl.includes('.key') ||
@@ -96,6 +100,7 @@ export default {
       targetUrl.includes('/key') ||
       Boolean(request.headers.get('channelid')) ||
       Boolean(request.headers.get('channelId')) ||
+      Boolean(request.headers.get('channel_id')) ||
       hasJioAuth;
 
     // ── Forward request (strip browser WAF-triggering headers) ──
@@ -123,13 +128,20 @@ export default {
       fwdHeaders.set('User-Agent', jioUa);
     }
 
+    // Network18 syndication / Akamai referer fallback
+    if (targetHost.includes('n18syndication') || targetHost.includes('akamaized.net')) {
+      if (!fwdHeaders.has('referer')) {
+        fwdHeaders.set('Referer', 'https://www.cnbctv18.com/');
+      }
+    }
+
     // Extract query parameters from target URL
     const searchParams = parsedTarget.searchParams;
     const urlChannelId = searchParams.get('channelid') || searchParams.get('channel_id') || searchParams.get('channelId');
     const urlSrno = searchParams.get('srno');
     const hdneaVal = searchParams.get('__hdnea__') || searchParams.get('hdnea');
 
-    // Build cookies (propagating query params and hdnea, matching JioTV-Go key handling)
+    // Build cookies (propagating query params, hdnea, and Jio auth matching JioTV-Go key handling)
     const existingCookie = fwdHeaders.get('cookie') || '';
     const cookiePairs = existingCookie ? existingCookie.split(';').map(s => s.trim()).filter(Boolean) : [];
     const cookieMap = new Map();
@@ -143,7 +155,7 @@ export default {
       cookieMap.set('__hdnea__', hdneaVal);
     }
 
-    // If this is a Jio target or carries Jio auth, also populate query params into cookies
+    // If this is a Jio target or carries Jio auth, also populate query params and auth tokens into cookies
     if (isJioTarget || hasJioAuth) {
       for (const [pk, pv] of searchParams.entries()) {
         if (!cookieMap.has(pk)) cookieMap.set(pk, pv);
@@ -155,6 +167,13 @@ export default {
       if (urlChannelId && !fwdHeaders.get('channelid')) {
         fwdHeaders.set('channelid', urlChannelId);
         fwdHeaders.set('channelId', urlChannelId);
+        fwdHeaders.set('channel_id', urlChannelId);
+      }
+      if (fwdHeaders.get('channelid') && !fwdHeaders.get('channel_id')) {
+        fwdHeaders.set('channel_id', fwdHeaders.get('channelid'));
+      }
+      if (fwdHeaders.get('channel_id') && !fwdHeaders.get('channelid')) {
+        fwdHeaders.set('channelid', fwdHeaders.get('channel_id'));
       }
       if (!fwdHeaders.get('appkey')) fwdHeaders.set('appkey', 'NzNiMDhlYzQyNjJm');
       if (!fwdHeaders.get('devicetype')) fwdHeaders.set('devicetype', 'phone');
@@ -163,6 +182,20 @@ export default {
       if (!fwdHeaders.get('usergroup')) fwdHeaders.set('usergroup', 'tvYR7NSNn7rymo3F');
       if (!fwdHeaders.get('versionCode') && !fwdHeaders.get('versioncode')) fwdHeaders.set('versionCode', '424');
       if (!fwdHeaders.get('lbcookie')) fwdHeaders.set('lbcookie', '1');
+
+      // Mirror critical session tokens to cookies for edge / CDN / load-balancer compatibility
+      const sso = fwdHeaders.get('ssotoken');
+      if (sso && !cookieMap.has('ssotoken')) cookieMap.set('ssotoken', sso);
+      const auth = fwdHeaders.get('accesstoken');
+      if (auth && !cookieMap.has('accesstoken')) cookieMap.set('accesstoken', auth);
+      const lb = fwdHeaders.get('lbcookie');
+      if (lb && !cookieMap.has('lbcookie')) cookieMap.set('lbcookie', lb);
+      const uid = fwdHeaders.get('uniqueid') || fwdHeaders.get('uniqueId');
+      if (uid && !cookieMap.has('uniqueId')) cookieMap.set('uniqueId', uid);
+      const cid = fwdHeaders.get('channelid') || fwdHeaders.get('channel_id');
+      if (cid && !cookieMap.has('channelid')) cookieMap.set('channelid', cid);
+      const sr = fwdHeaders.get('srno');
+      if (sr && !cookieMap.has('srno')) cookieMap.set('srno', sr);
     }
 
     if (cookieMap.size > 0) {
