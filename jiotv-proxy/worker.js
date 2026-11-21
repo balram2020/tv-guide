@@ -129,9 +129,13 @@ export default {
     }
 
     // Network18 syndication / Akamai referer fallback
-    if (targetHost.includes('n18syndication') || targetHost.includes('akamaized.net')) {
+    if (targetHost.includes('n18syndication') || targetHost.includes('cnbc')) {
       if (!fwdHeaders.has('referer')) {
         fwdHeaders.set('Referer', 'https://www.cnbctv18.com/');
+      }
+    } else if (targetHost.includes('jiolivestreaming') || targetHost.includes('jio')) {
+      if (!fwdHeaders.has('referer')) {
+        fwdHeaders.set('Referer', 'https://jiotv.com/');
       }
     }
 

@@ -2333,12 +2333,29 @@ function getJioHlsConfig(channel, streamUrl) {
         return;
       }
 
-      const isKey = Boolean(keyInfo) ||
-                    context.type === 'key' ||
-                    (context.frag && context.frag.type === 'key') ||
-                    targetUrl.indexOf('.pkey') >= 0 ||
-                    targetUrl.indexOf('.key') >= 0 ||
-                    targetUrl.indexOf('/getkey') >= 0;
+      // Check if this is an actual key request.
+      // Must NEVER intercept media segments (.ts, .m4s, .mp4, .aac) or playlists (.m3u8).
+      const cleanPath = targetUrl.split('?')[0].toLowerCase();
+      const isMediaOrPlaylist = cleanPath.endsWith('.m3u8') ||
+                                cleanPath.endsWith('.ts') ||
+                                cleanPath.endsWith('.m4s') ||
+                                cleanPath.endsWith('.mp4') ||
+                                cleanPath.endsWith('.aac') ||
+                                context.type === 'manifest' ||
+                                context.type === 'level' ||
+                                context.type === 'fragment' ||
+                                context.type === 'part' ||
+                                context.type === 'audioTrack' ||
+                                context.type === 'subtitleTrack';
+
+      const isKey = !isMediaOrPlaylist && (
+        context.type === 'key' ||
+        (context.frag && context.frag.type === 'key') ||
+        /\.pkey(\?|$)/i.test(targetUrl) ||
+        /\.key(\?|$)/i.test(targetUrl) ||
+        /\/getkey(\?|$|\/)/i.test(targetUrl) ||
+        /\/key(\?|$|\/)/i.test(targetUrl)
+      );
 
       if (!isKey) {
         return super.load(context, config, callbacks);
@@ -2466,7 +2483,16 @@ function getJioHlsConfig(channel, streamUrl) {
         } catch(e) {}
       }
 
-      // Attempt 3: Direct fetch (for public CDNs)
+      // Attempt 3: Direct fetch (for public CDNs or when proxy is geo-blocked)
+      if (!keyBuf) {
+        try {
+          const res = await fetch(keyUrlWithToken, { headers: buildCleanHeaders() });
+          if (res.ok) {
+            const buf = await toKeyBuffer(res);
+            if (buf.byteLength === 16) keyBuf = buf;
+          }
+        } catch(e) {}
+      }
       if (!keyBuf) {
         try {
           const res = await fetch(keyUrlWithToken);
@@ -2545,6 +2571,7 @@ function _loadHlsDesktop(ch, url) {
       setDot(ch.id, 'live');
       requestWake();
     });
+    let netRetries = 0;
     hls.on(Hls.Events.ERROR, async (e, d) => {
       console.warn('JioTV Stream Error:', d.type, d.details, d);
       if (d.fatal) {
@@ -2569,6 +2596,22 @@ function _loadHlsDesktop(ch, url) {
               hls.startLoad();
               return;
             } catch(err) {}
+          }
+        } else if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          const code = (d.response && d.response.code) || (d.context && d.context.xhr && d.context.xhr.status);
+          if (!ch._proxied && (code === 403 || code === 401 || d.details === 'manifestLoadError')) {
+            ch._proxied = true;
+            const pUrl = JIO._p(url);
+            console.log(`JioTV stream returned HTTP ${code || d.details}, retrying via proxy:`, pUrl);
+            hls.loadSource(pUrl);
+            hls.startLoad();
+            return;
+          }
+          if (netRetries < 3) {
+            netRetries++;
+            console.log(`Auto-recovering JioTV network error (${d.details})... attempt ${netRetries}/3`);
+            hls.startLoad();
+            return;
           }
         }
         ov.style.display = 'flex';
@@ -2600,6 +2643,7 @@ function _loadHlsInTheater(ch, url) {
       setDot(ch.id, 'live');
       requestWake();
     });
+    let theaterNetRetries = 0;
     echoHls.on(Hls.Events.ERROR, async (e, d) => {
       console.warn('JioTV Theater Stream Error:', d.type, d.details, d);
       if (d.fatal) {
@@ -2622,6 +2666,21 @@ function _loadHlsInTheater(ch, url) {
               echoHls.startLoad();
               return;
             } catch(err) {}
+          }
+        } else if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
+          const code = (d.response && d.response.code) || (d.context && d.context.xhr && d.context.xhr.status);
+          if (!ch._proxied && (code === 403 || code === 401 || d.details === 'manifestLoadError')) {
+            ch._proxied = true;
+            const pUrl = JIO._p(url);
+            console.log(`JioTV theater stream returned HTTP ${code || d.details}, retrying via proxy:`, pUrl);
+            echoHls.loadSource(pUrl);
+            echoHls.startLoad();
+            return;
+          }
+          if (theaterNetRetries < 3) {
+            theaterNetRetries++;
+            echoHls.startLoad();
+            return;
           }
         }
         showToast('⚠️ JioTV stream error: ' + (d.details || 'Playback error'));
