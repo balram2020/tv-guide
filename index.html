@@ -375,6 +375,13 @@ body.echo-mode .player-panel{display:none !important}
 }
 .jio-login-btn:hover{opacity:.85}
 .jio-login-btn.signed-in{background:linear-gradient(135deg,#22c55e,#16a34a);box-shadow:0 0 10px rgba(34,197,94,0.4)}
+.jio-logout-btn{
+  background:rgba(239,68,68,0.15);
+  border:1px solid rgba(239,68,68,0.4);color:#f87171;padding:7px 12px;border-radius:8px;font-size:.8rem;
+  font-weight:700;cursor:pointer;white-space:nowrap;display:flex;align-items:center;gap:5px;
+  transition:all .2s;
+}
+.jio-logout-btn:hover{background:rgba(239,68,68,0.28);border-color:#ef4444;color:#fff}
 .jio-modal{background:var(--bg2);border:1px solid #2a4a8a;border-radius:16px;
   padding:24px;width:400px;max-width:95vw;box-shadow:0 12px 48px rgba(0,0,0,.7),0 0 24px rgba(79,142,247,.18);
   animation:cardFadeIn .3s ease-out;}
@@ -572,9 +579,14 @@ body.echo-mode .player-panel{display:none !important}
       <span>📡</span> JioTV Premium <span class="badge" id="badgeJio">—</span>
     </button>
   </div>
-  <button class="jio-login-btn" id="jioLoginBtn" onclick="openJioModal()" style="display:none">
-    🔑 Sign in to Jio
-  </button>
+  <div style="display:flex;align-items:center;gap:6px">
+    <button class="jio-login-btn" id="jioLoginBtn" onclick="openJioModal()" style="display:none">
+      🔑 Sign in to Jio
+    </button>
+    <button class="jio-logout-btn" id="jioLogoutBtn" onclick="jioSignOut()" style="display:none" title="Log out of JioTV to sign in again">
+      🚪 Sign Out
+    </button>
+  </div>
   <div class="region-indicator" id="regionSummary">
     Active: India TV (762 verified streams)
   </div>
@@ -782,10 +794,13 @@ body.echo-mode .player-panel{display:none !important}
     <!-- STEP 3: Signed in -->
     <div id="jioStep3" style="display:none;text-align:center">
       <div style="font-size:2.5rem;margin-bottom:8px">✅</div>
-      <div style="font-size:1rem;font-weight:700;color:#22c55e;margin-bottom:4px">Signed In!</div>
-      <div style="font-size:.8rem;color:var(--text2);margin-bottom:16px" id="jioSignedInInfo">Loading channels…</div>
-      <button class="jio-btn" onclick="closeJioModal()">Done</button>
-      <button class="jio-btn-sec" style="margin-top:8px;color:#ef4444;border-color:rgba(239,68,68,.3)" onclick="jioSignOut()">🔓 Sign Out</button>
+      <div style="font-size:1.05rem;font-weight:700;color:#22c55e;margin-bottom:4px">Connected to JioTV</div>
+      <div style="font-size:.82rem;color:var(--text2);margin-bottom:16px" id="jioSignedInInfo">Loading channels…</div>
+      <div style="display:flex;flex-direction:column;gap:8px">
+        <button class="jio-btn" onclick="closeJioModal()">Done</button>
+        <button class="jio-btn" style="background:linear-gradient(135deg,#f97316,#ea580c)" onclick="jioSwitchAccount()">🔄 Switch Account / Sign in Again</button>
+        <button class="jio-btn-sec" style="color:#ef4444;border-color:rgba(239,68,68,.3)" onclick="jioSignOut()">🔓 Sign Out of Jio</button>
+      </div>
     </div>
   </div>
 </div>
@@ -2141,17 +2156,21 @@ const _origSwitchRegion = switchRegion;
 switchRegion = function(reg) {
   document.getElementById('tabJio').classList.toggle('active', reg === 'jio');
   const jioBtn = document.getElementById('jioLoginBtn');
+  const logoutBtn = document.getElementById('jioLogoutBtn');
   if (reg === 'jio') {
     jioBtn.style.display = 'flex';
     if (JIO.loggedIn) {
       jioBtn.textContent = '✅ Jio Connected';
       jioBtn.classList.add('signed-in');
+      if (logoutBtn) logoutBtn.style.display = 'flex';
     } else {
       jioBtn.textContent = '🔑 Sign in to Jio';
       jioBtn.classList.remove('signed-in');
+      if (logoutBtn) logoutBtn.style.display = 'none';
     }
   } else {
     jioBtn.style.display = 'none';
+    if (logoutBtn) logoutBtn.style.display = 'none';
   }
   if (reg === 'jio') {
     // Handle jio region manually
@@ -2659,6 +2678,8 @@ async function onJioLoginSuccess() {
   const jioBtn = document.getElementById('jioLoginBtn');
   jioBtn.textContent = '✅ Jio Connected';
   jioBtn.classList.add('signed-in');
+  const logoutBtn = document.getElementById('jioLogoutBtn');
+  if (logoutBtn && currentRegion === 'jio') logoutBtn.style.display = 'flex';
   await loadJioChannels(true);
   document.getElementById('jioSignedInInfo').textContent =
     `${jioUiChannels.length} channels loaded · Sub: ${JIO.subscriberId.slice(0,6)}…`;
@@ -2673,10 +2694,43 @@ function jioSignOut() {
   updateJioBadge();
   closeJioModal();
   const jioBtn = document.getElementById('jioLoginBtn');
-  jioBtn.textContent = '🔑 Sign in to Jio';
-  jioBtn.classList.remove('signed-in');
+  if (jioBtn) {
+    jioBtn.textContent = '🔑 Sign in to Jio';
+    jioBtn.classList.remove('signed-in');
+  }
+  const logoutBtn = document.getElementById('jioLogoutBtn');
+  if (logoutBtn) logoutBtn.style.display = 'none';
+
+  if (currentChannel && (currentChannel.jio || currentChannel.region === 'jio')) {
+    if (hls) { hls.destroy(); hls = null; }
+    if (echoHls) { echoHls.destroy(); echoHls = null; }
+    const vid = document.getElementById('vid');
+    if (vid) vid.src = '';
+    const echoVid = document.getElementById('echoVid');
+    if (echoVid) echoVid.src = '';
+    const ov = document.getElementById('vidOv');
+    if (ov) {
+      ov.style.display = 'flex';
+      ov.innerHTML = '<span style="color:var(--text2)">Signed out of JioTV.</span>';
+    }
+    setDot(currentChannel.id, 'none');
+    currentChannel = null;
+  }
+
   if (currentRegion === 'jio') switchRegion('jio');
   showToast('🔓 Signed out of JioTV');
+}
+
+function jioSwitchAccount() {
+  jioSignOut();
+  document.getElementById('jioPhone').value = '';
+  document.getElementById('jioOtp').value = '';
+  openJioModal();
+  showJioStep(1);
+  setTimeout(() => {
+    const p = document.getElementById('jioPhone');
+    if (p) p.focus();
+  }, 100);
 }
 
 // ── INIT JIO on page load ──
