@@ -21,20 +21,21 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders });
     }
 
-    // ── Extract target URL ──
+    // ── Extract target URL (supports query param ?url= or path-based /proxy/https://... or /https://...) ──
     let targetUrl = url.searchParams.get('url') || url.searchParams.get('u');
     if (!targetUrl) {
-      const pathname = url.pathname;
-      const prefix = '/proxy/';
-      const idx = pathname.indexOf(prefix);
-      if (idx !== -1) {
-        let rest = pathname.slice(idx + prefix.length);
-        if (rest.startsWith('https:/') && !rest.startsWith('https://')) {
-          rest = 'https://' + rest.slice(7);
-        } else if (rest.startsWith('http:/') && !rest.startsWith('http://')) {
-          rest = 'http://' + rest.slice(6);
-        }
-        targetUrl = rest + url.search;
+      let pathname = url.pathname;
+      if (pathname.startsWith('/proxy/')) pathname = pathname.slice(7);
+      else if (pathname.startsWith('/proxy')) pathname = pathname.slice(6);
+      else if (pathname.startsWith('/')) pathname = pathname.slice(1);
+
+      if (pathname.startsWith('https:/') && !pathname.startsWith('https://')) {
+        pathname = 'https://' + pathname.slice(7);
+      } else if (pathname.startsWith('http:/') && !pathname.startsWith('http://')) {
+        pathname = 'http://' + pathname.slice(6);
+      }
+      if (pathname.startsWith('http://') || pathname.startsWith('https://')) {
+        targetUrl = pathname + url.search;
       }
     }
 
@@ -73,6 +74,11 @@ export default {
       targetHost.startsWith('192.168.') ||
       targetHost.startsWith('10.') ||
       targetHost.startsWith('172.16.') ||
+      targetHost.startsWith('172.17.') ||
+      targetHost.startsWith('172.18.') ||
+      targetHost.startsWith('172.19.') ||
+      targetHost.startsWith('172.2') ||
+      targetHost.startsWith('172.3') ||
       targetHost === '169.254.169.254'
     ) {
       return new Response(
@@ -81,7 +87,8 @@ export default {
       );
     }
 
-    // ── Determine if request is a decryption key or stream chunk ──
+    const isJioTarget = targetHost.includes('jio') || targetHost.includes('jiotv');
+    const hasJioAuth = Boolean(request.headers.get('ssotoken')) || Boolean(request.headers.get('accesstoken'));
     const isKey =
       targetUrl.includes('.key') ||
       targetUrl.includes('.pkey') ||
@@ -89,9 +96,9 @@ export default {
       targetUrl.includes('/key') ||
       Boolean(request.headers.get('channelid')) ||
       Boolean(request.headers.get('channelId')) ||
-      Boolean(request.headers.get('ssotoken'));
+      hasJioAuth;
 
-    // ── Forward request (strip all browser-identifying headers that trigger WAF 403) ──
+    // ── Forward request (strip browser WAF-triggering headers) ──
     const fwdHeaders = new Headers();
     const blockedHeaders = new Set([
       'host', 'origin', 'referer', 'sec-ch-ua', 'sec-ch-ua-mobile',
@@ -112,25 +119,43 @@ export default {
     // Set standard ExoPlayer / JioTV App User-Agent
     const jioUa = 'plaYtv/7.1.8 (Linux;Android 13) ExoPlayerLib/1.3.1';
     const incomingUa = fwdHeaders.get('user-agent') || '';
-    if (!incomingUa || incomingUa.includes('Mozilla/') || isKey) {
+    if (!incomingUa || incomingUa.includes('Mozilla/') || isKey || isJioTarget) {
       fwdHeaders.set('User-Agent', jioUa);
     }
 
-    // Akamai Token Cookie Propagation: Extract __hdnea__ or hdnea from URL query or headers
-    let hdneaMatch = targetUrl.match(/[?&](?:__hdnea__|hdnea)=([^&]+)/);
-    if (!hdneaMatch && request.headers.get('cookie')) {
-      hdneaMatch = request.headers.get('cookie').match(/__hdnea__=([^;]+)/);
-    }
-    if (hdneaMatch && hdneaMatch[1]) {
-      const existingCookie = fwdHeaders.get('cookie') || '';
-      if (!existingCookie.includes('__hdnea__=')) {
-        fwdHeaders.set('Cookie', existingCookie ? `${existingCookie}; __hdnea__=${hdneaMatch[1]}` : `__hdnea__=${hdneaMatch[1]}`);
-      }
+    // Extract query parameters from target URL
+    const searchParams = parsedTarget.searchParams;
+    const urlChannelId = searchParams.get('channelid') || searchParams.get('channel_id') || searchParams.get('channelId');
+    const urlSrno = searchParams.get('srno');
+    const hdneaVal = searchParams.get('__hdnea__') || searchParams.get('hdnea');
+
+    // Build cookies (propagating query params and hdnea, matching JioTV-Go key handling)
+    const existingCookie = fwdHeaders.get('cookie') || '';
+    const cookiePairs = existingCookie ? existingCookie.split(';').map(s => s.trim()).filter(Boolean) : [];
+    const cookieMap = new Map();
+    for (const pair of cookiePairs) {
+      const eqIdx = pair.indexOf('=');
+      if (eqIdx !== -1) cookieMap.set(pair.slice(0, eqIdx).trim(), pair.slice(eqIdx + 1).trim());
     }
 
-    // For Jio Key requests, ensure all required authorization headers are present
-    if (isKey) {
-      if (!fwdHeaders.get('srno')) fwdHeaders.set('srno', '230203144000');
+    // If hdnea present in query or incoming cookie, inject __hdnea__
+    if (hdneaVal && !cookieMap.has('__hdnea__')) {
+      cookieMap.set('__hdnea__', hdneaVal);
+    }
+
+    // If this is a Jio target or carries Jio auth, also populate query params into cookies
+    if (isJioTarget || hasJioAuth) {
+      for (const [pk, pv] of searchParams.entries()) {
+        if (!cookieMap.has(pk)) cookieMap.set(pk, pv);
+      }
+      // Inject required Jio metadata headers if missing
+      if (urlSrno && !fwdHeaders.get('srno')) fwdHeaders.set('srno', urlSrno);
+      else if (!fwdHeaders.get('srno')) fwdHeaders.set('srno', '230203144000');
+
+      if (urlChannelId && !fwdHeaders.get('channelid')) {
+        fwdHeaders.set('channelid', urlChannelId);
+        fwdHeaders.set('channelId', urlChannelId);
+      }
       if (!fwdHeaders.get('appkey')) fwdHeaders.set('appkey', 'NzNiMDhlYzQyNjJm');
       if (!fwdHeaders.get('devicetype')) fwdHeaders.set('devicetype', 'phone');
       if (!fwdHeaders.get('os')) fwdHeaders.set('os', 'android');
@@ -138,11 +163,11 @@ export default {
       if (!fwdHeaders.get('usergroup')) fwdHeaders.set('usergroup', 'tvYR7NSNn7rymo3F');
       if (!fwdHeaders.get('versionCode') && !fwdHeaders.get('versioncode')) fwdHeaders.set('versionCode', '424');
       if (!fwdHeaders.get('lbcookie')) fwdHeaders.set('lbcookie', '1');
-      const chId = fwdHeaders.get('channelid') || fwdHeaders.get('channelId');
-      if (chId) {
-        fwdHeaders.set('channelId', chId);
-        fwdHeaders.set('channelid', chId);
-      }
+    }
+
+    if (cookieMap.size > 0) {
+      const cookieStr = Array.from(cookieMap.entries()).map(([k, v]) => `${k}=${v}`).join('; ');
+      fwdHeaders.set('Cookie', cookieStr);
     }
 
     const fwdInit = {
@@ -184,5 +209,5 @@ export default {
       statusText: upstream.statusText,
       headers: respHeaders,
     });
-  },
+  }
 };

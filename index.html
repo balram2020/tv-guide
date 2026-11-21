@@ -1038,11 +1038,14 @@ function withToken(u, tok) {
 }
 
 function buildHlsErrorUI(id, title, desc, url) {
+  const isKeyOrJio = title.includes("Key") || title.includes("Jio") || desc.includes("sign") || desc.includes("key");
+  const jioBtn = isKeyOrJio ? `<button class="pa-btn primary" style="min-width:auto;padding:6px 14px;background:#2563eb" onclick="openJioModal()">🔑 Jio Sign-in</button>` : '';
   return `
     <div style="font-size:1.8rem;margin-bottom:4px">⚠️</div>
     <span style="color:#ef4444;font-size:.9rem;font-weight:700">${title}</span>
-    <small style="font-size:.74rem;color:#a1a1aa;max-width:280px;line-height:1.4;margin:4px 0 10px">${desc}</small>
+    <small style="font-size:.74rem;color:#a1a1aa;max-width:320px;line-height:1.4;margin:4px 0 10px">${desc}</small>
     <div style="display:flex;gap:8px;justify-content:center;flex-wrap:wrap">
+      ${jioBtn}
       <button class="pa-btn primary" style="min-width:auto;padding:6px 14px" onclick="retry()">↺ Retry</button>
       <button class="pa-btn" style="min-width:auto;padding:6px 14px" onclick="openVLC()">▶ VLC</button>
       <button class="pa-btn" style="min-width:auto;padding:6px 14px" onclick="nextCh()">⏭ Next</button>
@@ -1077,19 +1080,7 @@ function playCh(id) {
   let mediaRetries = 0;
 
   if (Hls.isSupported()) {
-    const opts = Object.assign({}, HLS_CONFIG);
-    const tok = tokenOf(ch.url);
-    if (tok || ch.ua) {
-      opts.xhrSetup = function(xhr, u) {
-        if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0) {
-          xhr.open('GET', withToken(u, tok), true);
-        }
-        if (ch.ua) {
-          try { xhr.setRequestHeader("User-Agent", ch.ua); } catch(e){}
-        }
-      };
-    }
-    hls = new Hls(opts);
+    hls = new Hls(getJioHlsConfig(ch, ch.url));
     hls.loadSource(ch.url);
     hls.attachMedia(vid);
     hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -1098,11 +1089,37 @@ function playCh(id) {
       setDot(id, "live");
       requestWake();
     });
-    hls.on(Hls.Events.ERROR, (e, d) => {
+    hls.on(Hls.Events.ERROR, async (e, d) => {
       console.warn("Desktop HLS Error:", d.type, d.details, d);
       if (d.fatal) {
+        if (d.details === Hls.ErrorDetails.KEY_LOAD_ERROR || d.details === 'keyLoadError') {
+          console.warn('Key load error encountered in playCh:', d);
+          if (ch.jio || ch.jioId) {
+            const ok = await JIO.refreshAuth().catch(() => false);
+            if (ok) {
+              try {
+                const res = await JIO.getStreamUrl(ch.jioId);
+                hls.loadSource(res.url);
+                hls.startLoad();
+                return;
+              } catch(err) {}
+            }
+          }
+          ov.style.display = "flex";
+          ov.innerHTML = buildHlsErrorUI(id, "🔑 Key Decryption Error", "Stream encryption key could not be loaded. Please ensure you are signed in to JioTV if this is a Jio channel.", ch.url);
+          setDot(id, "error");
+          return;
+        }
         if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
           const code = (d.response && d.response.code) || (d.context && d.context.xhr && d.context.xhr.status);
+          if (!ch._proxied && (code === 403 || code === 401 || d.details === 'manifestLoadError')) {
+            ch._proxied = true;
+            const pUrl = JIO._p(ch.url);
+            console.log(`Direct stream returned HTTP ${code || d.details}, retrying via proxy:`, pUrl);
+            hls.loadSource(pUrl);
+            hls.startLoad();
+            return;
+          }
           if (code === 403 || code === 401) {
             ov.style.display = "flex";
             ov.innerHTML = buildHlsErrorUI(id, "🔒 Geo-Restricted Stream", `CDN returned HTTP ${code} (Geo-blocked). Try external player like VLC.`, ch.url);
@@ -1176,19 +1193,7 @@ function playChInTheater(id) {
   let mediaRetries = 0;
 
   if (Hls.isSupported()) {
-    const opts = Object.assign({}, HLS_CONFIG);
-    const tok = tokenOf(ch.url);
-    if (tok || ch.ua) {
-      opts.xhrSetup = function(xhr, u) {
-        if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0) {
-          xhr.open('GET', withToken(u, tok), true);
-        }
-        if (ch.ua) {
-          try { xhr.setRequestHeader("User-Agent", ch.ua); } catch(e){}
-        }
-      };
-    }
-    echoHls = new Hls(opts);
+    echoHls = new Hls(getJioHlsConfig(ch, ch.url));
     echoHls.loadSource(ch.url);
     echoHls.attachMedia(vid);
     echoHls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -1196,11 +1201,36 @@ function playChInTheater(id) {
       setDot(id, "live");
       requestWake();
     });
-    echoHls.on(Hls.Events.ERROR, (e, d) => {
+    echoHls.on(Hls.Events.ERROR, async (e, d) => {
       console.warn("Theater HLS Error:", d.type, d.details, d);
       if (d.fatal) {
+        if (d.details === Hls.ErrorDetails.KEY_LOAD_ERROR || d.details === 'keyLoadError') {
+          console.warn('Key load error encountered in theater:', d);
+          if (ch.jio || ch.jioId) {
+            const ok = await JIO.refreshAuth().catch(() => false);
+            if (ok) {
+              try {
+                const res = await JIO.getStreamUrl(ch.jioId);
+                echoHls.loadSource(res.url);
+                echoHls.startLoad();
+                return;
+              } catch(err) {}
+            }
+          }
+          showToast(`🔑 Key decryption error loading stream`);
+          setDot(id, "error");
+          return;
+        }
         if (d.type === Hls.ErrorTypes.NETWORK_ERROR) {
           const code = (d.response && d.response.code) || (d.context && d.context.xhr && d.context.xhr.status);
+          if (!ch._proxied && (code === 403 || code === 401 || d.details === 'manifestLoadError')) {
+            ch._proxied = true;
+            const pUrl = JIO._p(ch.url);
+            console.log(`Direct stream returned HTTP ${code || d.details}, retrying via proxy:`, pUrl);
+            echoHls.loadSource(pUrl);
+            echoHls.startLoad();
+            return;
+          }
           if (code === 403 || code === 401) {
             showToast(`🔒 Stream Geo-Blocked (HTTP ${code})`);
             setDot(id, "error");
@@ -1684,11 +1714,11 @@ const JIO = {
   // When running on Cloudflare Pages (*.pages.dev) or custom domain, uses same-origin '/proxy/' automatically.
   // When on GitHub Pages or local preview, falls back to Cloudflare Pages proxy URL.
   get PROXY() {
+    const custom = localStorage.getItem('jio_proxy_url');
+    if (custom) return custom.endsWith('/') ? custom : custom + '/';
     if (window.location.hostname.endsWith('pages.dev') || (!window.location.hostname.endsWith('github.io') && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1')) {
       return window.location.origin + '/proxy/';
     }
-    const custom = localStorage.getItem('jio_proxy_url');
-    if (custom) return custom.endsWith('/') ? custom : custom + '/';
     return 'https://tvguide-live.pages.dev/proxy/';
   },
   LOGIN_BASE: 'https://jiotvapi.media.jio.com/userservice/apis/',
@@ -1982,15 +2012,18 @@ const JIO = {
   // ── STREAM URL ──
   async getStreamUrl(jioId) {
     await this.beginSession().catch(() => {});
+    const now = new Date();
+    const pad = (n, l=2) => String(n).padStart(l, '0');
+    const srnoVal = pad(now.getFullYear()%100) + pad(now.getMonth()+1) + pad(now.getDate()) + pad(now.getHours()) + pad(now.getMinutes()) + pad(now.getMilliseconds(), 3);
     const body = new URLSearchParams({
       stream_type: 'Seek', channel_id: String(jioId),
-      programId: '0', showtime: '000000', srno: '20', begin: '', end: ''
+      programId: '0', showtime: '000000', srno: srnoVal, begin: '', end: ''
     }).toString();
     const h = this.sdkHeaders(jioId);
     h['Content-Type'] = 'application/x-www-form-urlencoded';
     const targetUrl = this.PLAY_BASE + 'v1.1/geturl?langId=6';
     let r = await fetch(this._p(targetUrl), { method: 'POST', headers: h, body });
-    if (r.status === 419) {
+    if (r.status === 419 || r.status === 401) {
       await this.refreshAuth();
       const retryH = this.sdkHeaders(jioId);
       retryH['Content-Type'] = 'application/x-www-form-urlencoded';
@@ -2001,7 +2034,7 @@ const JIO = {
       throw new Error(`Playback HTTP ${r.status}: ${errText.slice(0, 100)}`);
     }
     const j = await r.json();
-    const url = j.result || j.mpd?.result || '';
+    const url = j.bitrates?.auto || j.result || j.m3u8?.auto || j.mpd?.result || '';
     if (!url) throw new Error(`No stream URL: ${j.message || j.code}`);
     return { url, dash: url.split('?')[0].endsWith('.mpd'), license: j.mpd?.key || '' };
   },
@@ -2262,14 +2295,24 @@ function getJioHlsConfig(channel, streamUrl) {
 
       // Clean headers for browser fetch (browser rejects custom User-Agent in fetch())
       const buildCleanHeaders = () => {
-        const raw = JIO.authHeaders(chJioId, '230203144000');
+        let channelIdToUse = String(chJioId || '0');
+        let srnoToUse = '230203144000';
+        try {
+          const u = new URL(keyUrlWithToken);
+          const qCh = u.searchParams.get('channelid') || u.searchParams.get('channel_id') || u.searchParams.get('channelId');
+          if (qCh) channelIdToUse = qCh;
+          const qSrno = u.searchParams.get('srno');
+          if (qSrno) srnoToUse = qSrno;
+        } catch(e) {}
+
+        const raw = JIO.authHeaders(channelIdToUse, srnoToUse);
         const clean = {};
         Object.keys(raw).forEach(k => {
           if (k.toLowerCase() !== 'user-agent') clean[k] = raw[k];
         });
-        clean['channelId'] = String(chJioId);
-        clean['channelid'] = String(chJioId);
-        clean['srno'] = '230203144000';
+        clean['channelId'] = channelIdToUse;
+        clean['channelid'] = channelIdToUse;
+        clean['srno'] = srnoToUse;
         return clean;
       };
 
@@ -2331,8 +2374,8 @@ function getJioHlsConfig(channel, streamUrl) {
         const proxyUrl = JIO._p(keyUrlWithToken);
         let res = await fetch(proxyUrl, { headers: buildCleanHeaders() });
         lastStatus = res.status;
-        if (res.status === 419 || res.status === 401) {
-          if (await JIO.refreshAuth()) {
+        if (res.status === 419 || res.status === 401 || res.status === 450 || res.status === 403) {
+          if (await JIO.refreshAuth().catch(() => false)) {
             res = await fetch(proxyUrl, { headers: buildCleanHeaders() });
             lastStatus = res.status;
           }
@@ -2415,6 +2458,9 @@ function getJioHlsConfig(channel, streamUrl) {
     xhrSetup: function(xhr, u) {
       if (tok && u.indexOf('__hdnea__') < 0 && u.indexOf('hdnts=') < 0) {
         xhr.open('GET', withToken(u, tok), true);
+      }
+      if (channel && channel.ua) {
+        try { xhr.setRequestHeader("User-Agent", channel.ua); } catch(e){}
       }
     }
   };
